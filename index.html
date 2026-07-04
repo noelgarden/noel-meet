@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- 外部スクリプトの読み込みを禁止（PeerJSは自前ホスト）。CDN改ざん・スクリプト注入対策 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src https://*.peerjs.com wss://*.peerjs.com https://www.googleapis.com https://accounts.google.com https://oauth2.googleapis.com; media-src 'self' blob:; img-src 'self' data:; frame-src https://accounts.google.com; object-src 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>ノエルミート — 拠点の窓</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap" rel="stylesheet">
+<script src="peerjs.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --bg:#0e1613;
+    --panel:#16211d;
+    --panel2:#1d2b26;
+    --line:#26362f;
+    --text:#e8ede9;
+    --muted:#8a9691;
+    --sage:#7fb894;
+    --amber:#e0a458;
+    --clay:#d97a6c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Zen Kaku Gothic New',sans-serif;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  button{font-family:inherit;cursor:pointer}
+  button:focus-visible,select:focus-visible,input:focus-visible{
+    outline:2px solid var(--sage);outline-offset:2px;
+  }
+
+  /* ---------- セットアップ画面 ---------- */
+  #setup{
+    height:100%;
+    display:flex;align-items:center;justify-content:center;
+    padding:24px;
+    overflow-y:auto;
+  }
+  .setup-card{
+    width:100%;max-width:440px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:20px;
+    padding:36px 32px;
+    box-shadow:0 8px 32px rgba(0,0,0,.35);
+  }
+  .setup-card h1{
+    font-weight:900;font-size:26px;letter-spacing:.02em;
+    display:flex;align-items:center;gap:10px;
+  }
+  .setup-card h1 .win{font-size:30px}
+  .setup-card .sub{
+    color:var(--muted);font-size:13px;margin:8px 0 28px;line-height:1.7;
+  }
+  .field{margin-bottom:18px}
+  .field label{
+    display:block;font-size:13px;font-weight:700;color:var(--muted);
+    margin-bottom:6px;letter-spacing:.04em;
+  }
+  .field input,.field select{
+    width:100%;
+    background:var(--panel2);
+    border:1px solid var(--line);
+    border-radius:12px;
+    color:var(--text);
+    font-family:inherit;font-size:16px;
+    padding:12px 14px;
+    appearance:none;
+  }
+  .field select{
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238a9691' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;
+    background-position:right 14px center;
+  }
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .roomrow{display:flex;gap:8px}
+  .roomrow input{flex:1;min-width:0}
+  .mini{
+    flex-shrink:0;
+    background:var(--panel2);
+    border:1px solid var(--line);
+    border-radius:12px;
+    color:var(--muted);
+    font-size:13px;font-weight:700;
+    padding:0 14px;
+    transition:color .15s,border-color .15s;
+  }
+  .mini:hover{color:var(--sage);border-color:var(--sage)}
+  .optset{
+    margin-bottom:18px;
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:10px 14px;
+  }
+  .optset summary{
+    cursor:pointer;
+    font-size:13px;font-weight:700;color:var(--muted);
+    letter-spacing:.04em;
+    list-style-position:inside;
+  }
+  .optset[open] summary{margin-bottom:14px}
+  .optset .hint{
+    color:var(--muted);font-size:12px;line-height:1.8;
+  }
+  #startBtn{
+    width:100%;
+    margin-top:8px;
+    background:var(--sage);
+    color:#0e1613;
+    border:none;border-radius:14px;
+    font-size:17px;font-weight:900;letter-spacing:.06em;
+    padding:15px;
+    transition:filter .15s;
+  }
+  #startBtn:hover{filter:brightness(1.08)}
+  .notes{
+    margin-top:22px;
+    border-top:1px solid var(--line);
+    padding-top:16px;
+    color:var(--muted);font-size:12px;line-height:1.9;
+  }
+  .notes li{margin-left:1.2em}
+
+  /* ---------- メイン画面 ---------- */
+  #main{
+    height:100%;
+    display:none;
+    flex-direction:column;
+  }
+  #main.active{display:flex}
+  #setup.hidden{display:none}
+
+  .topbar{
+    display:flex;align-items:center;gap:12px;
+    padding:10px 18px;
+    background:var(--panel);
+    border-bottom:1px solid var(--line);
+    flex-shrink:0;
+  }
+  .topbar .dot{
+    width:10px;height:10px;border-radius:50%;
+    background:var(--clay);flex-shrink:0;
+    transition:background .3s;
+  }
+  .topbar .dot.on{background:var(--sage)}
+  .topbar .dot.mid{background:var(--amber)}
+  .topbar .room{
+    font-size:13px;color:var(--muted);
+    background:var(--panel2);border:1px solid var(--line);
+    border-radius:8px;padding:3px 10px;
+  }
+  .topbar .myname{font-weight:700;font-size:15px}
+  .topbar .myname small{color:var(--muted);font-weight:500;margin-left:6px;font-size:12px}
+  .topbar .clock{
+    margin-left:auto;
+    font-weight:900;font-size:20px;letter-spacing:.08em;
+    font-variant-numeric:tabular-nums;
+  }
+
+  #grid{
+    flex:1;
+    display:grid;gap:14px;
+    padding:14px;
+    min-height:0;
+  }
+  #grid.cols-1{grid-template-columns:1fr}
+  #grid.cols-2{grid-template-columns:1fr 1fr}
+  #grid.cols-3{grid-template-columns:1fr 1fr 1fr}
+
+  .tile{
+    position:relative;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:18px;
+    overflow:hidden;
+    display:flex;flex-direction:column;
+    min-height:0;
+  }
+  .tile .sill{
+    display:flex;align-items:center;gap:8px;
+    padding:8px 14px;
+    background:var(--panel2);
+    border-bottom:1px solid var(--line);
+    flex-shrink:0;
+    z-index:2;
+  }
+  .tile .sill .sdot{
+    width:9px;height:9px;border-radius:50%;
+    background:var(--clay);flex-shrink:0;
+  }
+  .tile.connected .sill .sdot{background:var(--sage)}
+  .tile.trying .sill .sdot{
+    background:var(--amber);
+    animation:blink 1.2s ease-in-out infinite;
+  }
+  .tile.offline .sill .sdot{background:var(--clay)}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+  @media (prefers-reduced-motion:reduce){
+    .tile.trying .sill .sdot{animation:none}
+  }
+  .tile .sill .tname{font-weight:700;font-size:14px}
+  .tile .sill .tstatus{
+    margin-left:auto;color:var(--muted);font-size:12px;
+  }
+  .tile .vwrap{flex:1;position:relative;min-height:0;background:#0a100d}
+  .tile video{
+    position:absolute;inset:0;
+    width:100%;height:100%;
+    object-fit:cover;
+  }
+  .tile .placeholder{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+    color:var(--muted);font-size:14px;
+    background:var(--panel);
+    z-index:1;
+  }
+  .tile .placeholder .win{font-size:44px;opacity:.75}
+  .tile.connected .placeholder{display:none}
+
+  /* 自分の小窓 */
+  #selfWrap{
+    position:fixed;
+    right:18px;bottom:96px;
+    width:200px;aspect-ratio:4/3;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:16px;
+    overflow:hidden;
+    box-shadow:0 6px 24px rgba(0,0,0,.45);
+    z-index:20;
+  }
+  #selfWrap video{
+    width:100%;height:100%;object-fit:cover;
+    transform:scaleX(-1);
+  }
+  /* 画面共有中はミラーせず、全体が見えるよう contain 表示 */
+  #selfWrap.sharing video{
+    transform:none;
+    object-fit:contain;
+    background:#0a100d;
+  }
+  #selfWrap .selflabel{
+    position:absolute;left:0;right:0;bottom:0;
+    font-size:11px;color:var(--text);
+    background:linear-gradient(transparent,rgba(10,16,13,.85));
+    padding:14px 10px 6px;
+  }
+
+  /* コントロール */
+  #controls{
+    display:flex;align-items:center;justify-content:center;gap:16px;
+    padding:14px;
+    background:var(--panel);
+    border-top:1px solid var(--line);
+    flex-shrink:0;
+  }
+  .ctl{
+    width:54px;height:54px;border-radius:50%;
+    border:1px solid var(--line);
+    background:var(--panel2);
+    color:var(--text);
+    font-size:22px;
+    display:flex;align-items:center;justify-content:center;
+    transition:background .15s,border-color .15s;
+  }
+  .ctl:hover{background:#243530}
+  .ctl.off{
+    background:var(--clay);
+    border-color:var(--clay);
+    color:#0e1613;
+  }
+  .ctl.active{
+    background:var(--sage);
+    border-color:var(--sage);
+    color:#0e1613;
+  }
+  .ctl.rec-on{
+    background:var(--clay);
+    border-color:var(--clay);
+    color:#0e1613;
+    animation:recpulse 1.6s ease-in-out infinite;
+  }
+  @keyframes recpulse{0%,100%{box-shadow:0 0 0 0 rgba(217,122,108,.5)}50%{box-shadow:0 0 0 8px rgba(217,122,108,0)}}
+  @media (prefers-reduced-motion:reduce){
+    .ctl.rec-on{animation:none}
+  }
+  .recbadge{
+    color:var(--clay);
+    font-weight:900;font-size:14px;letter-spacing:.06em;
+    font-variant-numeric:tabular-nums;
+    background:var(--panel2);
+    border:1px solid var(--clay);
+    border-radius:8px;
+    padding:3px 10px;
+  }
+  .ctl.danger{
+    background:transparent;
+    border-color:var(--clay);
+    color:var(--clay);
+  }
+  .ctl.danger:hover{background:var(--clay);color:#0e1613}
+
+  /* トースト */
+  #toast{
+    position:fixed;left:50%;bottom:88px;
+    transform:translateX(-50%) translateY(20px);
+    background:var(--panel2);
+    border:1px solid var(--line);
+    color:var(--text);
+    font-size:13px;
+    padding:10px 20px;
+    border-radius:12px;
+    box-shadow:0 6px 24px rgba(0,0,0,.45);
+    opacity:0;pointer-events:none;
+    transition:opacity .25s,transform .25s;
+    z-index:50;
+    max-width:90vw;
+  }
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* レスポンシブ */
+  @media (max-width:640px){
+    #grid{gap:10px;padding:10px}
+    #grid.cols-2,#grid.cols-3{grid-template-columns:1fr}
+    #selfWrap{width:120px;right:10px;bottom:86px}
+    .topbar .clock{font-size:16px}
+    .ctl{width:48px;height:48px;font-size:19px}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ セットアップ画面 ============ -->
+<div id="setup">
+  <div class="setup-card">
+    <h1><span class="win">🪟</span>ノエルミート</h1>
+    <p class="sub">拠点の窓 — 各店舗をカメラと音声で24時間つなぎっぱなしにする常時接続アプリです。全拠点で同じ合言葉を入力してください。</p>
+
+    <div class="field">
+      <label for="inRoom">合言葉（全拠点で同じもの・8文字以上）</label>
+      <div class="roomrow">
+        <input id="inRoom" type="text" placeholder="例：xk7m-p2q9-w4t8" autocomplete="off">
+        <button id="genBtn" type="button" class="mini" title="推測されにくい合言葉をランダム生成">🎲 生成</button>
+      </div>
+    </div>
+
+    <div class="row2">
+      <div class="field">
+        <label for="inCount">拠点の数</label>
+        <select id="inCount">
+          <option value="2">2 拠点</option>
+          <option value="3" selected>3 拠点</option>
+          <option value="4">4 拠点</option>
+          <option value="5">5 拠点</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="inMe">この端末の拠点</label>
+        <select id="inMe"></select>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="inName">この拠点の表示名</label>
+      <input id="inName" type="text" placeholder="例：一宮本社" autocomplete="off">
+    </div>
+
+    <details class="optset">
+      <summary>録画の保存先（Google ドライブ・任意）</summary>
+      <div class="field">
+        <label for="inClientId">Google OAuth クライアントID</label>
+        <input id="inClientId" type="text" placeholder="xxxx.apps.googleusercontent.com" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="inFolder">保存先フォルダ（URL または ID）</label>
+        <input id="inFolder" type="text" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off">
+      </div>
+      <p class="hint">未設定でも録画はできます（この端末へのダウンロード保存）。フォルダが空欄ならマイドライブ直下に保存。クライアントIDの作り方は README 参照。</p>
+    </details>
+
+    <button id="startBtn">この拠点でつなぐ</button>
+
+    <ul class="notes">
+      <li>初回はカメラ・マイクの許可ダイアログが表示されます。「許可」を選んでください。</li>
+      <li>スピーカーは各拠点1台にしてください（複数鳴るとハウリングします）。</li>
+      <li>エコーキャンセラー付きの会議用スピーカーマイクを推奨します。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ メイン画面 ============ -->
+<div id="main">
+  <div class="topbar">
+    <div class="dot" id="connDot"></div>
+    <div class="room" id="roomLabel"></div>
+    <div class="myname" id="myLabel"></div>
+    <div class="recbadge" id="recBadge" hidden>● REC 00:00</div>
+    <div class="clock" id="clock">--:--</div>
+  </div>
+
+  <div id="grid"></div>
+
+  <div id="selfWrap">
+    <video id="selfVideo" autoplay playsinline muted></video>
+    <div class="selflabel" id="selfLabel">自分</div>
+  </div>
+
+  <div id="controls">
+    <button class="ctl" id="micBtn" title="マイク" aria-label="マイクの切替">🎤</button>
+    <button class="ctl" id="camBtn" title="カメラ" aria-label="カメラの切替">🎥</button>
+    <button class="ctl" id="shareBtn" title="画面共有" aria-label="画面共有の切替">🖥️</button>
+    <button class="ctl" id="recBtn" title="録画" aria-label="録画の開始/停止">⏺</button>
+    <button class="ctl" id="fsBtn" title="全画面" aria-label="全画面の切替">⛶</button>
+    <button class="ctl danger" id="hangBtn" title="切断" aria-label="切断">✕</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ================= 状態 ================= */
+const state = {
+  room: '',
+  roomHash: '',          // 合言葉のSHA-256由来（Peer ID用・推測不能）
+  authToken: '',         // 着信検証用トークン（Peer IDとは別系統の導出）
+  count: 3,
+  me: 1,
+  name: '',
+  peer: null,
+  localStream: null,
+  screenStream: null,    // 画面共有中のみ非null
+  calls: new Map(),      // 拠点番号 -> MediaConnection
+  // 録画まわり
+  clientId: '',          // Google OAuth クライアントID（未設定なら端末保存）
+  folderId: '',          // ドライブ保存先フォルダID（空ならマイドライブ直下）
+  recorder: null,        // 録画中のみ非null
+  recStartAt: 0,
+  recTimer: null,
+  recCleanup: null,      // 合成キャンバス等の後始末関数
+  recAddAudio: null,     // 録画中に新規接続の音声を追加する関数
+  tokenClient: null,
+  gToken: '',
+  gTokenExp: 0,
+  started: false,
+  wakeLock: null,
+  loopTimer: null,
+};
+
+const LS_KEY = 'noel-window';
+const PREFIX = 'noelwindow';
+
+/* ================= ユーティリティ ================= */
+async function sha256hex(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+// Peer ID は合言葉のハッシュから導出（合言葉を知らないと ID 自体が推測できない）
+function peerIdFor(n){
+  return `${PREFIX}-${state.roomHash}-${n}`;
+}
+function parseFolderId(v){
+  v = (v || '').trim();
+  if(!v) return '';
+  const m = /folders\/([A-Za-z0-9_-]+)/.exec(v);   // フォルダURL形式
+  if(m) return m[1];
+  if(/^[A-Za-z0-9_-]{10,}$/.test(v)) return v;      // ID直接指定
+  return '';
+}
+function genPassphrase(){
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789'; // 紛らわしい文字(i,l,o,0,1)を除外
+  const rand = new Uint32Array(12);
+  crypto.getRandomValues(rand);
+  let s = '';
+  for(let i = 0; i < 12; i++){
+    s += chars[rand[i] % chars.length];
+    if(i % 4 === 3 && i < 11) s += '-';
+  }
+  return s;
+}
+function siteName(n){
+  if(n === state.me && state.name) return state.name;
+  return `拠点${n}`;
+}
+function $(id){ return document.getElementById(id); }
+
+let toastTimer = null;
+function toast(msg){
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
+/* ================= 設定の保存 / 復元 ================= */
+function saveSettings(){
+  try{
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      room: state.room, count: state.count, me: state.me, name: state.name,
+      clientId: $('inClientId').value.trim(), folder: $('inFolder').value.trim(),
+    }));
+  }catch(e){ /* プライベートモード等では無視 */ }
+}
+function loadSettings(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return;
+    const s = JSON.parse(raw);
+    if(s.room) $('inRoom').value = s.room;
+    if(s.count) $('inCount').value = String(s.count);
+    rebuildMeOptions();
+    if(s.me) $('inMe').value = String(s.me);
+    if(s.name) $('inName').value = s.name;
+    if(s.clientId) $('inClientId').value = s.clientId;
+    if(s.folder) $('inFolder').value = s.folder;
+  }catch(e){ /* 壊れた保存値は無視 */ }
+}
+
+/* ================= セットアップ画面 ================= */
+function rebuildMeOptions(){
+  const count = parseInt($('inCount').value, 10);
+  const sel = $('inMe');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  for(let n = 1; n <= count; n++){
+    const op = document.createElement('option');
+    op.value = String(n);
+    op.textContent = `拠点 ${n}`;
+    sel.appendChild(op);
+  }
+  if(prev && parseInt(prev, 10) <= count) sel.value = prev;
+}
+
+$('inCount').addEventListener('change', rebuildMeOptions);
+
+$('genBtn').addEventListener('click', () => {
+  $('inRoom').value = genPassphrase();
+});
+
+$('startBtn').addEventListener('click', async () => {
+  state.room  = $('inRoom').value.trim();
+  state.count = parseInt($('inCount').value, 10);
+  state.me    = parseInt($('inMe').value, 10);
+  state.name  = $('inName').value.trim();
+
+  if(!state.room){
+    toast('合言葉を入力してください');
+    $('inRoom').focus();
+    return;
+  }
+  if(state.room.length < 8){
+    toast('合言葉は8文字以上にしてください（🎲 生成 ボタンが便利です）');
+    $('inRoom').focus();
+    return;
+  }
+  if(!crypto.subtle){
+    toast('この接続では暗号機能を使えません。https でアクセスしてください');
+    return;
+  }
+  // 合言葉から Peer ID とは別系統で導出した2つの鍵を作る
+  state.roomHash  = (await sha256hex(`noel-meet-room|${state.room}`)).slice(0, 20);
+  state.authToken = await sha256hex(`noel-meet-auth|${state.room}`);
+
+  // 録画の保存先設定（任意）
+  state.clientId = $('inClientId').value.trim();
+  const folderRaw = $('inFolder').value.trim();
+  state.folderId = parseFolderId(folderRaw);
+  if(folderRaw && !state.folderId){
+    toast('保存先フォルダの形式を認識できません。マイドライブ直下に保存します');
+  }
+  saveSettings();
+
+  try{
+    state.localStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  }catch(err){
+    toast(`カメラ/マイクを取得できませんでした（${err.name}）`);
+    return;
+  }
+
+  startMain();
+});
+
+/* ================= メイン画面の構築 ================= */
+function startMain(){
+  state.started = true;
+  $('setup').classList.add('hidden');
+  $('main').classList.add('active');
+
+  // 壁面モニターでの覗き見対策：合言葉は先頭2文字だけ表示
+  $('roomLabel').textContent = `🔒 ${state.room.slice(0, 2)}••••`;
+  $('myLabel').innerHTML = '';
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = siteName(state.me);
+  const small = document.createElement('small');
+  small.textContent = `拠点${state.me}`;
+  $('myLabel').appendChild(nameSpan);
+  $('myLabel').appendChild(small);
+  $('selfLabel').textContent = `${siteName(state.me)}（自分）`;
+
+  buildGrid();
+
+  $('selfVideo').srcObject = state.localStream;
+
+  updateClock();
+  setInterval(updateClock, 10000);
+
+  requestWakeLock();
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible' && state.started) requestWakeLock();
+  });
+
+  initPeer();
+
+  // 24時間運用の要：6秒ごとの自動再接続ループ
+  state.loopTimer = setInterval(() => {
+    if(!state.peer || state.peer.destroyed) return;
+    if(state.peer.disconnected){
+      try{ state.peer.reconnect(); }catch(e){}
+    }
+    connectAll();
+  }, 6000);
+}
+
+function buildGrid(){
+  const grid = $('grid');
+  grid.innerHTML = '';
+  const others = [];
+  for(let n = 1; n <= state.count; n++){
+    if(n !== state.me) others.push(n);
+  }
+  const cols = others.length <= 1 ? 1 : (others.length <= 4 ? 2 : 3);
+  grid.className = `cols-${cols}`;
+
+  for(const n of others){
+    const tile = document.createElement('div');
+    tile.className = 'tile offline';
+    tile.id = `tile-${n}`;
+    tile.innerHTML = `
+      <div class="sill">
+        <div class="sdot"></div>
+        <div class="tname">拠点${n}</div>
+        <div class="tstatus">オフライン</div>
+      </div>
+      <div class="vwrap">
+        <video autoplay playsinline id="video-${n}"></video>
+        <div class="placeholder">
+          <div class="win">🪟</div>
+          <div>拠点${n} を待っています…</div>
+        </div>
+      </div>`;
+    grid.appendChild(tile);
+  }
+}
+
+function setTileStatus(n, status){
+  const tile = $(`tile-${n}`);
+  if(!tile) return;
+  tile.classList.remove('connected', 'trying', 'offline');
+  tile.classList.add(status);
+  const label = tile.querySelector('.tstatus');
+  if(label){
+    label.textContent =
+      status === 'connected' ? '接続中' :
+      status === 'trying'    ? '接続を試行中…' : 'オフライン';
+  }
+  updateConnDot();
+}
+
+function updateConnDot(){
+  const dot = $('connDot');
+  let connected = 0;
+  state.calls.forEach(c => { if(c.open) connected++; });
+  const total = state.count - 1;
+  dot.classList.remove('on', 'mid');
+  if(connected >= total && total > 0) dot.classList.add('on');
+  else if(connected > 0) dot.classList.add('mid');
+}
+
+function updateClock(){
+  const d = new Date();
+  $('clock').textContent =
+    `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/* ================= PeerJS ================= */
+const ICE_CONFIG = { iceServers: [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  // 社内ファイアウォール越え用の無料TURN（プロトタイプ用途。本番は有料TURN推奨）
+  { urls: 'turn:openrelay.metered.ca:80',  username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+]};
+
+function initPeer(){
+  const peer = new Peer(peerIdFor(state.me), { config: ICE_CONFIG });
+  state.peer = peer;
+
+  peer.on('open', () => {
+    toast(`${siteName(state.me)} として接続しました`);
+    connectAll();
+  });
+
+  // 着信は認証トークンを検証してから応答する（合言葉を知らない接続は拒否）
+  peer.on('call', call => {
+    if(!call.metadata || call.metadata.token !== state.authToken){
+      try{ call.close(); }catch(e){}
+      toast('認証されていない接続を拒否しました');
+      return;
+    }
+    call.answer(state.localStream);
+    adoptCall(call);
+  });
+
+  peer.on('disconnected', () => {
+    toast('シグナリングサーバーから切断 — 再接続中…');
+    try{ peer.reconnect(); }catch(e){}
+  });
+
+  peer.on('error', err => {
+    if(err.type === 'unavailable-id'){
+      // 再起動直後：ブローカーが旧接続を保持している。5秒後に再初期化
+      toast('IDが競合しています。5秒後に再接続します…');
+      setTimeout(() => {
+        try{ peer.destroy(); }catch(e){}
+        if(state.started) initPeer();
+      }, 5000);
+    }else if(err.type === 'peer-unavailable'){
+      // 相手が未参加なだけ。再接続ループが拾う
+    }else{
+      toast(`接続エラー：${err.type || err.message}`);
+    }
+  });
+}
+
+function remoteNumber(peerIdStr){
+  const m = /-(\d+)$/.exec(peerIdStr);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// 発信は「自分より番号が大きい拠点」のみ（グレア＝二重接続の回避）
+function connectAll(){
+  const peer = state.peer;
+  if(!peer || peer.destroyed || peer.disconnected || !peer.open) return;
+  for(let n = state.me + 1; n <= state.count; n++){
+    const existing = state.calls.get(n);
+    if(existing){
+      if(existing.open) continue;
+      // 発信直後は1サイクル猶予（重複発信の防止）
+      if(Date.now() - (existing._startedAt || 0) < 10000) continue;
+      try{ existing.close(); }catch(e){}
+      state.calls.delete(n);
+    }
+    const call = peer.call(peerIdFor(n), state.localStream, {
+      metadata: { token: state.authToken },
+    });
+    if(!call) continue;
+    call._startedAt = Date.now();
+    adoptCall(call, n);
+    setTileStatus(n, 'trying');
+  }
+}
+
+function adoptCall(call, knownN){
+  const n = knownN != null ? knownN : remoteNumber(call.peer);
+  if(n == null || n === state.me || n > state.count) return;
+
+  const old = state.calls.get(n);
+  if(old && old !== call){
+    try{ old.close(); }catch(e){}
+  }
+  state.calls.set(n, call);
+
+  call.on('stream', stream => {
+    const video = $(`video-${n}`);
+    if(video && video.srcObject !== stream) video.srcObject = stream;
+    setTileStatus(n, 'connected');
+    // 画面共有中に確立した接続にも共有映像を流す
+    if(state.screenStream){
+      const track = state.screenStream.getVideoTracks()[0];
+      if(track && track.readyState === 'live') replaceVideoOnCall(call, track);
+    }
+    // 録画中に接続してきた拠点の音声も録音に追加
+    if(state.recAddAudio) state.recAddAudio(stream);
+  });
+
+  const drop = () => {
+    if(state.calls.get(n) === call) state.calls.delete(n);
+    const video = $(`video-${n}`);
+    if(video) video.srcObject = null;
+    setTileStatus(n, 'offline');
+    // 次の再接続ループで自動的に再発信される
+  };
+  call.on('close', drop);
+  call.on('error', drop);
+}
+
+/* ================= コントロール ================= */
+$('micBtn').addEventListener('click', () => {
+  if(!state.localStream) return;
+  const tracks = state.localStream.getAudioTracks();
+  const nowOn = !(tracks[0] && tracks[0].enabled);
+  tracks.forEach(t => { t.enabled = nowOn; });
+  $('micBtn').classList.toggle('off', !nowOn);
+  $('micBtn').textContent = nowOn ? '🎤' : '🔇';
+});
+
+$('camBtn').addEventListener('click', () => {
+  if(!state.localStream) return;
+  const tracks = state.localStream.getVideoTracks();
+  const nowOn = !(tracks[0] && tracks[0].enabled);
+  tracks.forEach(t => { t.enabled = nowOn; });
+  $('camBtn').classList.toggle('off', !nowOn);
+  $('camBtn').textContent = nowOn ? '🎥' : '🚫';
+});
+
+/* ---- 画面共有 ---- */
+function replaceVideoOnCall(call, track){
+  const pc = call.peerConnection;
+  if(!pc) return;
+  const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+  if(sender) sender.replaceTrack(track).catch(() => {});
+}
+function replaceVideoOnAllCalls(track){
+  state.calls.forEach(call => replaceVideoOnCall(call, track));
+}
+
+async function startScreenShare(){
+  if(!navigator.mediaDevices.getDisplayMedia){
+    toast('この端末は画面共有に対応していません');
+    return;
+  }
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: { ideal: 15 } },
+      audio: false,
+    });
+  }catch(err){
+    // NotAllowedError = ユーザーがキャンセルしただけなので黙って戻る
+    if(err.name !== 'NotAllowedError') toast(`画面共有を開始できませんでした（${err.name}）`);
+    return;
+  }
+  state.screenStream = stream;
+  const track = stream.getVideoTracks()[0];
+  // ブラウザ標準の「共有を停止」ボタンにも追従する
+  track.addEventListener('ended', stopScreenShare);
+  replaceVideoOnAllCalls(track);
+  $('selfVideo').srcObject = stream;
+  $('selfWrap').classList.add('sharing');
+  $('selfLabel').textContent = '🖥️ 画面共有中';
+  $('shareBtn').classList.add('active');
+  toast('画面共有を開始しました（カメラ映像の代わりに全拠点へ送信されます）');
+}
+
+function stopScreenShare(){
+  if(!state.screenStream) return;
+  state.screenStream.getTracks().forEach(t => t.stop());
+  state.screenStream = null;
+  const camTrack = state.localStream ? state.localStream.getVideoTracks()[0] : null;
+  if(camTrack) replaceVideoOnAllCalls(camTrack);
+  $('selfVideo').srcObject = state.localStream;
+  $('selfWrap').classList.remove('sharing');
+  $('selfLabel').textContent = `${siteName(state.me)}（自分）`;
+  $('shareBtn').classList.remove('active');
+  toast('画面共有を終了しました');
+}
+
+$('shareBtn').addEventListener('click', () => {
+  if(state.screenStream) stopScreenShare();
+  else startScreenShare();
+});
+
+/* ---- 録画（全拠点をキャンバス合成 + 音声ミックス）---- */
+function pickRecMime(){
+  const cands = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  return cands.find(c => MediaRecorder.isTypeSupported(c)) || '';
+}
+
+function recFileName(){
+  const d = new Date();
+  const p = x => String(x).padStart(2, '0');
+  return `ノエルミート録画_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}_${siteName(state.me)}.webm`;
+}
+
+function buildRecordingStream(){
+  const canvas = document.createElement('canvas');
+  canvas.width = 1280; canvas.height = 720;
+  const ctx = canvas.getContext('2d');
+
+  const drawTimer = setInterval(() => {
+    ctx.fillStyle = '#0e1613';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const items = [{ video: $('selfVideo'), label: `${siteName(state.me)}（自分）` }];
+    for(let n = 1; n <= state.count; n++){
+      if(n !== state.me) items.push({ video: $(`video-${n}`), label: `拠点${n}` });
+    }
+    const cols = items.length <= 1 ? 1 : (items.length <= 4 ? 2 : 3);
+    const rows = Math.ceil(items.length / cols);
+    const w = canvas.width / cols, h = canvas.height / rows;
+    items.forEach((it, i) => {
+      const x = (i % cols) * w, y = Math.floor(i / cols) * h;
+      const v = it.video;
+      if(v && v.srcObject && v.readyState >= 2 && v.videoWidth){
+        const scale = Math.max((w - 4) / v.videoWidth, (h - 4) / v.videoHeight);
+        const dw = v.videoWidth * scale, dh = v.videoHeight * scale;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x + 2, y + 2, w - 4, h - 4); ctx.clip();
+        ctx.drawImage(v, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+        ctx.restore();
+      }else{
+        ctx.fillStyle = '#16211d';
+        ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
+      }
+      ctx.font = '700 20px "Zen Kaku Gothic New", sans-serif';
+      const tw = ctx.measureText(it.label).width;
+      ctx.fillStyle = 'rgba(10,16,13,.72)';
+      ctx.fillRect(x + 10, y + h - 40, tw + 20, 30);
+      ctx.fillStyle = '#e8ede9';
+      ctx.fillText(it.label, x + 20, y + h - 18);
+    });
+  }, 100); // 10fps
+
+  // 音声ミックス：自分のマイク + 全拠点
+  const actx = new (window.AudioContext || window.webkitAudioContext)();
+  const dest = actx.createMediaStreamDestination();
+  // 無音源を常時接続して音声フレームを絶やさない
+  // （音声が完全に無いと MediaRecorder のミキサーが止まり録画データが空になる）
+  if(actx.createConstantSource){
+    const silent = actx.createConstantSource();
+    const gain = actx.createGain();
+    gain.gain.value = 0;
+    silent.connect(gain).connect(dest);
+    silent.start();
+  }
+  actx.resume().catch(() => {});
+  const added = new Set();
+  const addAudio = stream => {
+    if(!stream || added.has(stream) || stream.getAudioTracks().length === 0) return;
+    try{
+      actx.createMediaStreamSource(stream).connect(dest);
+      added.add(stream);
+    }catch(e){}
+  };
+  addAudio(state.localStream);
+  for(let n = 1; n <= state.count; n++){
+    const v = $(`video-${n}`);
+    if(v && v.srcObject) addAudio(v.srcObject);
+  }
+  state.recAddAudio = addAudio; // 録画中に接続してきた拠点の音声も拾う
+
+  const stream = new MediaStream([
+    ...canvas.captureStream(10).getVideoTracks(),
+    ...dest.stream.getAudioTracks(),
+  ]);
+  const cleanup = () => {
+    clearInterval(drawTimer);
+    stream.getTracks().forEach(t => t.stop());
+    try{ actx.close(); }catch(e){}
+    state.recAddAudio = null;
+  };
+  return { stream, cleanup };
+}
+
+function startRecording(){
+  if(typeof MediaRecorder === 'undefined'){
+    toast('この端末は録画に対応していません');
+    return;
+  }
+  // ドライブ設定済みなら認証を先に済ませる（初回はここで許可ポップアップが出る）
+  if(state.clientId) ensureDriveToken();
+
+  const { stream, cleanup } = buildRecordingStream();
+  const chunks = [];
+  let recorder;
+  try{
+    recorder = new MediaRecorder(stream, { mimeType: pickRecMime(), videoBitsPerSecond: 2500000 });
+  }catch(err){
+    cleanup();
+    toast(`録画を開始できませんでした（${err.name}）`);
+    return;
+  }
+  recorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    cleanup();
+    const blob = new Blob(chunks, { type: 'video/webm' });
+    chunks.length = 0;
+    if(blob.size === 0){ toast('録画データが空でした'); return; }
+    saveRecording(blob, recFileName());
+  };
+  recorder.start(1000);
+  state.recorder = recorder;
+  state.recCleanup = cleanup;
+  state.recStartAt = Date.now();
+  $('recBtn').classList.add('rec-on');
+  $('recBadge').hidden = false;
+  updateRecBadge();
+  state.recTimer = setInterval(updateRecBadge, 1000);
+  toast('録画を開始しました（全拠点の映像と音声が記録されます）');
+}
+
+function updateRecBadge(){
+  const s = Math.floor((Date.now() - state.recStartAt) / 1000);
+  const p = x => String(x).padStart(2, '0');
+  $('recBadge').textContent = `● REC ${p(Math.floor(s / 60))}:${p(s % 60)}`;
+}
+
+function stopRecording(){
+  const rec = state.recorder;
+  if(!rec) return;
+  state.recorder = null;
+  clearInterval(state.recTimer);
+  $('recBtn').classList.remove('rec-on');
+  $('recBadge').hidden = true;
+  try{ rec.stop(); }catch(e){}   // onstop で保存処理へ
+}
+
+$('recBtn').addEventListener('click', () => {
+  if(state.recorder) stopRecording();
+  else startRecording();
+});
+
+/* ---- Google ドライブへの保存 ---- */
+function ensureDriveToken(){
+  return new Promise(resolve => {
+    if(!state.clientId || typeof google === 'undefined' || !google.accounts){
+      resolve('');
+      return;
+    }
+    if(state.gToken && Date.now() < state.gTokenExp - 60000){
+      resolve(state.gToken);
+      return;
+    }
+    try{
+      if(!state.tokenClient){
+        state.tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: state.clientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: () => {},
+          error_callback: () => {},
+        });
+      }
+      state.tokenClient.callback = resp => {
+        if(resp && resp.access_token){
+          state.gToken = resp.access_token;
+          state.gTokenExp = Date.now() + (resp.expires_in ? resp.expires_in * 1000 : 3600000);
+          resolve(state.gToken);
+        }else{
+          resolve('');
+        }
+      };
+      state.tokenClient.error_callback = () => resolve('');
+      state.tokenClient.requestAccessToken();
+    }catch(e){
+      resolve('');
+    }
+  });
+}
+
+async function saveRecording(blob, name){
+  if(!state.clientId){
+    downloadLocal(blob, name);
+    return;
+  }
+  toast('録画をドライブへアップロードしています…');
+  const token = await ensureDriveToken();
+  if(!token){
+    toast('Google認証できなかったため、端末に保存します');
+    downloadLocal(blob, name);
+    return;
+  }
+  try{
+    const meta = { name, mimeType: 'video/webm' };
+    if(state.folderId) meta.parents = [state.folderId];
+    const init = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+        'X-Upload-Content-Type': 'video/webm',
+        'X-Upload-Content-Length': String(blob.size),
+      },
+      body: JSON.stringify(meta),
+    });
+    if(!init.ok) throw new Error(`init ${init.status}`);
+    await uploadWithProgress(init.headers.get('Location'), blob);
+    toast(`✅ 録画をドライブに保存しました：${name}`);
+  }catch(err){
+    toast('ドライブ保存に失敗したため、端末に保存します');
+    downloadLocal(blob, name);
+  }
+}
+
+function uploadWithProgress(url, blob){
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.upload.onprogress = e => {
+      if(e.lengthComputable){
+        const badge = $('recBadge');
+        badge.hidden = false;
+        badge.textContent = `⬆ ${Math.round(e.loaded / e.total * 100)}%`;
+      }
+    };
+    const done = ok => { $('recBadge').hidden = true; ok ? resolve() : reject(new Error('upload failed')); };
+    xhr.onload = () => done(xhr.status >= 200 && xhr.status < 300);
+    xhr.onerror = () => done(false);
+    xhr.send(blob);
+  });
+}
+
+function downloadLocal(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  toast(`録画をこの端末に保存しました：${name}`);
+}
+
+$('fsBtn').addEventListener('click', () => {
+  if(document.fullscreenElement){
+    document.exitFullscreen();
+  }else{
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+});
+
+$('hangBtn').addEventListener('click', () => {
+  const msg = state.recorder
+    ? '録画中です。切断すると録画は破棄されます。接続を終了しますか？'
+    : '接続を終了しますか？';
+  if(!confirm(msg)) return;
+  state.started = false;
+  clearInterval(state.loopTimer);
+  state.calls.forEach(c => { try{ c.close(); }catch(e){} });
+  state.calls.clear();
+  if(state.peer){ try{ state.peer.destroy(); }catch(e){} }
+  if(state.screenStream){
+    state.screenStream.getTracks().forEach(t => t.stop());
+  }
+  if(state.localStream){
+    state.localStream.getTracks().forEach(t => t.stop());
+  }
+  location.reload();
+});
+
+/* ================= 画面スリープ防止 ================= */
+async function requestWakeLock(){
+  if(!('wakeLock' in navigator)) return;
+  try{
+    state.wakeLock = await navigator.wakeLock.request('screen');
+  }catch(e){ /* 電源設定等で拒否されることがある */ }
+}
+
+/* ================= 起動 ================= */
+rebuildMeOptions();
+loadSettings();
+</script>
+</body>
+</html>
