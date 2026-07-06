@@ -506,6 +506,7 @@ function toast(msg){
 
 /* ================= 設定の保存 / 復元 ================= */
 function saveSettings(){
+  if(window.__meetLink) return; // ミーティングリンク経由の一時参加は常時接続の設定を上書きしない
   try{
     localStorage.setItem(LS_KEY, JSON.stringify({
       room: state.room, count: state.count, me: state.me, name: state.name,
@@ -1173,6 +1174,33 @@ async function requestWakeLock(){
 /* ================= 起動 ================= */
 rebuildMeOptions();
 loadSettings();
+
+/* ================= ミーティングリンク対応（?room=） =================
+   ノエルFC管理システムのSVミーティング予約リンクから開いた場合：
+   合言葉はURLで指定済み。参加する側（本部SV／店舗）を選ぶだけで入室できる */
+(function(){
+  const urlRoom = (new URLSearchParams(location.search).get('room') || '').trim();
+  if(!urlRoom) return;
+  window.__meetLink = true;
+  $('inRoom').value = urlRoom;
+  $('inRoom').readOnly = true;
+  $('inCount').value = '2';
+  rebuildMeOptions();
+  const meSel = $('inMe');
+  meSel.options[0].textContent = '本部（SV）として参加';
+  meSel.options[1].textContent = '店舗として参加';
+  meSel.value = '2';  // リンクを開くのは主に店舗側
+  const sub = document.querySelector('.setup-card .sub');
+  if(sub) sub.textContent = 'SVミーティングのリンクから開いています。参加する側と表示名を確認して「ミーティングに参加する」を押してください（相手も同じリンクから入ります）。';
+  const meLabel = document.querySelector('label[for="inMe"]');
+  if(meLabel) meLabel.textContent = '参加する側';
+  const roomField = $('inRoom').closest('.field');
+  if(roomField) roomField.style.display = 'none';
+  const countField = $('inCount').closest('.field');
+  if(countField) countField.style.display = 'none';
+  $('inName').placeholder = '例：所沢店 市川 ／ SV 野田';
+  $('startBtn').textContent = 'ミーティングに参加する';
+})();
 </script>
 </body>
 </html>
