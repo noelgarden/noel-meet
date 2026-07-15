@@ -111,6 +111,41 @@
   .optset .hint{
     color:var(--muted);font-size:12px;line-height:1.8;
   }
+  .hint{color:var(--muted);font-size:12px;line-height:1.8;margin-top:8px}
+  .meetgen{
+    margin-top:22px;
+    border-top:1px solid var(--line);
+    padding-top:16px;
+  }
+  .meetgen-title{
+    font-size:13px;font-weight:700;color:var(--muted);
+    letter-spacing:.04em;margin-bottom:10px;
+  }
+  .mini.wide{width:100%;padding:11px}
+  .linkrow{display:flex;gap:8px;margin-top:12px}
+  .linkrow input{
+    flex:1;min-width:0;
+    background:var(--panel2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    color:var(--text);
+    font-size:12px;
+    padding:9px 10px;
+  }
+  /* 会議モード：接続済みの参加者だけタイル表示 */
+  body.meet .tile{display:none}
+  body.meet .tile.connected{display:flex}
+  .waitpanel{
+    grid-column:1/-1;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    color:var(--muted);font-size:14px;
+    border:1px dashed var(--line);
+    border-radius:18px;
+    padding:24px;
+  }
+  .waitpanel .win{font-size:52px;opacity:.75}
+  .waitpanel .linkrow{width:min(480px,90%)}
+  .waitpanel input{color:var(--muted)}
   #startBtn{
     width:100%;
     margin-top:8px;
@@ -342,7 +377,23 @@
 
 <!-- ============ セットアップ画面 ============ -->
 <div id="setup">
-  <div class="setup-card">
+  <!-- 会議モード（?m=トークン 付きURLで表示）：顧客向け参加画面 -->
+  <div class="setup-card" id="meetCard" hidden>
+    <h1><span class="win">🪟</span>オンライン打ち合わせ</h1>
+    <p class="sub">オンライン打ち合わせルームへようこそ。お名前を入力して「参加」を押してください。</p>
+    <div class="field">
+      <label for="inGuestName">お名前</label>
+      <input id="inGuestName" type="text" placeholder="例：山田 太郎" autocomplete="off">
+    </div>
+    <button id="joinBtn">カメラと音声で参加</button>
+    <ul class="notes">
+      <li>カメラ・マイクの許可が表示されたら「許可」を選んでください。</li>
+      <li>音が響く・相手の声が聞き取りにくい場合はイヤホンのご利用をおすすめします。</li>
+      <li>アプリのインストールは不要です。このままブラウザでご参加いただけます。</li>
+    </ul>
+  </div>
+
+  <div class="setup-card" id="kioskCard">
     <h1><span class="win">🪟</span>ノエルミート</h1>
     <p class="sub">拠点の窓 — 各店舗をカメラと音声で24時間つなぎっぱなしにする常時接続アプリです。全拠点で同じ合言葉を入力してください。</p>
 
@@ -395,6 +446,18 @@
       <li>スピーカーは各拠点1台にしてください（複数鳴るとハウリングします）。</li>
       <li>エコーキャンセラー付きの会議用スピーカーマイクを推奨します。</li>
     </ul>
+
+    <div class="meetgen">
+      <div class="meetgen-title">顧客とのオンライン打ち合わせ</div>
+      <button id="meetGenBtn" type="button" class="mini wide">📅 打ち合わせリンクを発行</button>
+      <div id="meetGenOut" hidden>
+        <div class="linkrow">
+          <input id="meetUrlOut" readonly>
+          <button id="meetCopyBtn" type="button" class="mini">コピー</button>
+        </div>
+        <p class="hint">このリンクを LINE やメールで相手に送ってください。時間になったら、お互いこのリンクを開くだけで繋がります（最大5人・有効期限なし・使い捨て推奨）。</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -432,12 +495,14 @@
 
 /* ================= 状態 ================= */
 const state = {
+  mode: 'kiosk',         // 'kiosk'=拠点常時接続 / 'meet'=顧客とのオンライン打ち合わせ
   room: '',
   roomHash: '',          // 合言葉のSHA-256由来（Peer ID用・推測不能）
   authToken: '',         // 着信検証用トークン（Peer IDとは別系統の導出）
   count: 3,
   me: 1,
   name: '',
+  names: {},             // 相手番号 -> 相手が名乗った表示名（データ接続で交換）
   peer: null,
   localStream: null,
   screenStream: null,    // 画面共有中のみ非null
@@ -468,7 +533,8 @@ async function sha256hex(text){
 }
 // Peer ID は合言葉のハッシュから導出（合言葉を知らないと ID 自体が推測できない）
 function peerIdFor(n){
-  return `${PREFIX}-${state.roomHash}-${n}`;
+  const prefix = state.mode === 'meet' ? 'noelmeet' : PREFIX;
+  return `${prefix}-${state.roomHash}-${n}`;
 }
 function parseFolderId(v){
   v = (v || '').trim();
@@ -490,8 +556,15 @@ function genPassphrase(){
   return s;
 }
 function siteName(n){
-  if(n === state.me && state.name) return state.name;
-  return `拠点${n}`;
+  const fallback = state.mode === 'meet' ? `参加者${n}` : `拠点${n}`;
+  if(n === state.me) return state.name || fallback;
+  return state.names[n] || fallback;
+}
+function refreshTileName(n){
+  const tile = $(`tile-${n}`);
+  if(!tile) return;
+  const label = tile.querySelector('.tname');
+  if(label) label.textContent = siteName(n);
 }
 function $(id){ return document.getElementById(id); }
 
@@ -551,6 +624,7 @@ $('genBtn').addEventListener('click', () => {
 });
 
 $('startBtn').addEventListener('click', async () => {
+  state.mode  = 'kiosk';
   state.room  = $('inRoom').value.trim();
   state.count = parseInt($('inCount').value, 10);
   state.me    = parseInt($('inMe').value, 10);
@@ -583,18 +657,73 @@ $('startBtn').addEventListener('click', async () => {
   }
   saveSettings();
 
+  if(!(await acquireMedia())) return;
+  startMain();
+});
+
+async function acquireMedia(){
   try{
     state.localStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
+    return true;
   }catch(err){
     toast(`カメラ/マイクを取得できませんでした（${err.name}）`);
+    return false;
+  }
+}
+
+/* ================= 会議モード（顧客とのオンライン打ち合わせ） ================= */
+const MEET_MAX = 5;
+const MEET_TOKEN = new URLSearchParams(location.search).get('m');
+
+// ?m=トークン 付きで開かれたら顧客向け参加画面に切り替え
+if(MEET_TOKEN){
+  document.title = 'オンライン打ち合わせ — ノエルミート';
+  $('kioskCard').hidden = true;
+  $('meetCard').hidden = false;
+}
+
+$('joinBtn').addEventListener('click', async () => {
+  state.mode  = 'meet';
+  state.room  = `meet:${MEET_TOKEN}`;
+  state.count = MEET_MAX;
+  state.me    = 1;                     // 空き番号は unavailable-id で自動的に繰り上げ
+  state.name  = $('inGuestName').value.trim().slice(0, 30);
+  if(!state.name){
+    toast('お名前を入力してください');
+    $('inGuestName').focus();
     return;
   }
-
+  state.roomHash  = (await sha256hex(`noel-meet-room|${state.room}`)).slice(0, 20);
+  state.authToken = await sha256hex(`noel-meet-auth|${state.room}`);
+  if(!(await acquireMedia())) return;
   startMain();
 });
+
+// 打ち合わせリンクの発行（拠点セットアップ画面内）
+function genMeetToken(){
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const rand = new Uint32Array(20);
+  crypto.getRandomValues(rand);
+  let t = '';
+  for(let i = 0; i < 20; i++) t += chars[rand[i] % chars.length];
+  return t;
+}
+async function copyText(text){
+  try{
+    await navigator.clipboard.writeText(text);
+    toast('リンクをコピーしました');
+  }catch(e){
+    toast('コピーできませんでした。リンクを長押し/選択してコピーしてください');
+  }
+}
+$('meetGenBtn').addEventListener('click', () => {
+  $('meetUrlOut').value = `${location.origin}${location.pathname}?m=${genMeetToken()}`;
+  $('meetGenOut').hidden = false;
+});
+$('meetCopyBtn').addEventListener('click', () => copyText($('meetUrlOut').value));
 
 /* ================= メイン画面の構築 ================= */
 function startMain(){
@@ -602,13 +731,16 @@ function startMain(){
   $('setup').classList.add('hidden');
   $('main').classList.add('active');
 
+  if(state.mode === 'meet') document.body.classList.add('meet');
   // 壁面モニターでの覗き見対策：合言葉は先頭2文字だけ表示
-  $('roomLabel').textContent = `🔒 ${state.room.slice(0, 2)}••••`;
+  $('roomLabel').textContent = state.mode === 'meet'
+    ? '🔒 オンライン打ち合わせ'
+    : `🔒 ${state.room.slice(0, 2)}••••`;
   $('myLabel').innerHTML = '';
   const nameSpan = document.createElement('span');
   nameSpan.textContent = siteName(state.me);
   const small = document.createElement('small');
-  small.textContent = `拠点${state.me}`;
+  small.textContent = state.mode === 'meet' ? '' : `拠点${state.me}`;
   $('myLabel').appendChild(nameSpan);
   $('myLabel').appendChild(small);
   $('selfLabel').textContent = `${siteName(state.me)}（自分）`;
@@ -654,18 +786,46 @@ function buildGrid(){
     tile.innerHTML = `
       <div class="sill">
         <div class="sdot"></div>
-        <div class="tname">拠点${n}</div>
+        <div class="tname"></div>
         <div class="tstatus">オフライン</div>
       </div>
       <div class="vwrap">
         <video autoplay playsinline id="video-${n}"></video>
         <div class="placeholder">
           <div class="win">🪟</div>
-          <div>拠点${n} を待っています…</div>
+          <div class="pmsg"></div>
         </div>
       </div>`;
+    tile.querySelector('.tname').textContent = siteName(n);
+    tile.querySelector('.pmsg').textContent = `${siteName(n)} を待っています…`;
     grid.appendChild(tile);
   }
+
+  // 会議モード：誰もいない間は招待リンク付きの待機パネルを表示
+  if(state.mode === 'meet'){
+    const wp = document.createElement('div');
+    wp.id = 'waitPanel';
+    wp.className = 'waitpanel';
+    wp.innerHTML = `
+      <div class="win">🪟</div>
+      <div>相手の参加を待っています…</div>
+      <div class="linkrow">
+        <input id="waitUrl" readonly>
+        <button id="waitCopyBtn" type="button" class="mini">リンクをコピー</button>
+      </div>`;
+    grid.appendChild(wp);
+    $('waitUrl').value = location.href;
+    $('waitCopyBtn').addEventListener('click', () => copyText(location.href));
+    updateMeetGrid();
+  }
+}
+
+function updateMeetGrid(){
+  if(state.mode !== 'meet') return;
+  const connected = document.querySelectorAll('#grid .tile.connected').length;
+  const wp = $('waitPanel');
+  if(wp) wp.style.display = connected ? 'none' : 'flex';
+  $('grid').className = `cols-${connected <= 1 ? 1 : (connected <= 4 ? 2 : 3)}`;
 }
 
 function setTileStatus(n, status){
@@ -680,14 +840,20 @@ function setTileStatus(n, status){
       status === 'trying'    ? '接続を試行中…' : 'オフライン';
   }
   updateConnDot();
+  updateMeetGrid();
 }
 
 function updateConnDot(){
   const dot = $('connDot');
   let connected = 0;
   state.calls.forEach(c => { if(c.open) connected++; });
-  const total = state.count - 1;
   dot.classList.remove('on', 'mid');
+  if(state.mode === 'meet'){
+    // 会議モードは1人でも繋がっていれば良好
+    if(connected > 0) dot.classList.add('on');
+    return;
+  }
+  const total = state.count - 1;
   if(connected >= total && total > 0) dot.classList.add('on');
   else if(connected > 0) dot.classList.add('mid');
 }
@@ -713,8 +879,26 @@ function initPeer(){
   state.peer = peer;
 
   peer.on('open', () => {
+    peer._opened = true;
     toast(`${siteName(state.me)} として接続しました`);
     connectAll();
+  });
+
+  // 名前交換用のデータ接続（認証トークンを検証）
+  peer.on('connection', conn => {
+    if(!conn.metadata || conn.metadata.token !== state.authToken){
+      try{ conn.close(); }catch(e){}
+      return;
+    }
+    const n = remoteNumber(conn.peer);
+    if(n == null) return;
+    if(conn.metadata.name){
+      state.names[n] = String(conn.metadata.name).slice(0, 30);
+      refreshTileName(n);
+    }
+    conn.on('open', () => {
+      try{ conn.send({ name: siteName(state.me) }); }catch(e){}
+    });
   });
 
   // 着信は認証トークンを検証してから応答する（合言葉を知らない接続は拒否）
@@ -723,6 +907,11 @@ function initPeer(){
       try{ call.close(); }catch(e){}
       toast('認証されていない接続を拒否しました');
       return;
+    }
+    const n = remoteNumber(call.peer);
+    if(n != null && call.metadata.name){
+      state.names[n] = String(call.metadata.name).slice(0, 30);
+      refreshTileName(n);
     }
     call.answer(state.localStream);
     adoptCall(call);
@@ -735,6 +924,18 @@ function initPeer(){
 
   peer.on('error', err => {
     if(err.type === 'unavailable-id'){
+      // 会議モードの参加時：その番号は使用中 → 次の空き番号を試す
+      if(state.mode === 'meet' && !peer._opened){
+        try{ peer.destroy(); }catch(e){}
+        if(state.me < MEET_MAX){
+          state.me++;
+          buildGrid();
+          initPeer();
+        }else{
+          toast('この打ち合わせルームは満室です（最大5人）');
+        }
+        return;
+      }
       // 再起動直後：ブローカーが旧接続を保持している。5秒後に再初期化
       toast('IDが競合しています。5秒後に再接続します…');
       setTimeout(() => {
@@ -768,12 +969,24 @@ function connectAll(){
       state.calls.delete(n);
     }
     const call = peer.call(peerIdFor(n), state.localStream, {
-      metadata: { token: state.authToken },
+      metadata: { token: state.authToken, name: siteName(state.me) },
     });
     if(!call) continue;
     call._startedAt = Date.now();
     adoptCall(call, n);
     setTileStatus(n, 'trying');
+    // 名前交換：相手の表示名を受け取る
+    try{
+      const dc = peer.connect(peerIdFor(n), {
+        metadata: { token: state.authToken, name: siteName(state.me) },
+      });
+      dc.on('data', d => {
+        if(d && d.name){
+          state.names[n] = String(d.name).slice(0, 30);
+          refreshTileName(n);
+        }
+      });
+    }catch(e){}
   }
 }
 
@@ -1145,9 +1358,10 @@ $('fsBtn').addEventListener('click', () => {
 });
 
 $('hangBtn').addEventListener('click', () => {
+  const end = state.mode === 'meet' ? '打ち合わせを退出しますか？' : '接続を終了しますか？';
   const msg = state.recorder
-    ? '録画中です。切断すると録画は破棄されます。接続を終了しますか？'
-    : '接続を終了しますか？';
+    ? `録画中です。終了すると録画は破棄されます。${end}`
+    : end;
   if(!confirm(msg)) return;
   state.started = false;
   clearInterval(state.loopTimer);
