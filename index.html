@@ -363,13 +363,24 @@
   }
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
-  /* レスポンシブ */
+  /* レスポンシブ（スマホ） */
   @media (max-width:640px){
     #grid{gap:10px;padding:10px}
     #grid.cols-2,#grid.cols-3{grid-template-columns:1fr}
-    #selfWrap{width:120px;right:10px;bottom:86px}
+    #selfWrap{width:120px;right:10px;bottom:78px}
+    .topbar{gap:8px;padding:8px 12px}
+    .topbar .room{font-size:11px;padding:2px 8px;flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .topbar .myname{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .topbar .myname small{display:none}
     .topbar .clock{font-size:16px}
-    .ctl{width:48px;height:48px;font-size:19px}
+    .recbadge{font-size:12px;padding:2px 7px}
+    /* ボタン6個が375px幅に収まるように（48*6 + 8*5 + 10*2 = 348px） */
+    #controls{gap:8px;padding:10px}
+    .ctl{width:48px;height:48px;font-size:19px;flex-shrink:0}
+    .setup-card{padding:26px 20px}
+    .tile .sill .tname{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .tile .sill .tstatus{font-size:11px;flex-shrink:0}
+    .waitpanel .linkrow{flex-direction:column}
   }
 </style>
 </head>
@@ -732,6 +743,10 @@ function startMain(){
   $('main').classList.add('active');
 
   if(state.mode === 'meet') document.body.classList.add('meet');
+  // スマホ等、画面共有に対応しない端末ではボタンを出さない
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){
+    $('shareBtn').style.display = 'none';
+  }
   // 壁面モニターでの覗き見対策：合言葉は先頭2文字だけ表示
   $('roomLabel').textContent = state.mode === 'meet'
     ? '🔒 オンライン打ち合わせ'
