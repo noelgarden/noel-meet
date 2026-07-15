@@ -1404,7 +1404,7 @@ loadSettings();
   meSel.options[0].textContent = '本部（SV）として参加';
   meSel.options[1].textContent = '店舗として参加';
   meSel.value = '2';  // リンクを開くのは主に店舗側
-  const sub = document.querySelector('.setup-card .sub');
+  const sub = document.querySelector('#kioskCard .sub');
   if(sub) sub.textContent = 'SVミーティングのリンクから開いています。参加する側と表示名を確認して「ミーティングに参加する」を押してください（相手も同じリンクから入ります）。';
   const meLabel = document.querySelector('label[for="inMe"]');
   if(meLabel) meLabel.textContent = '参加する側';
