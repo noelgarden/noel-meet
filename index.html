@@ -95,6 +95,36 @@
     border:1px solid rgba(61,220,132,.22);
     border-radius:999px;padding:6px 12px;
   }
+  /* モード切替タブ（顧客／拠点） */
+  .segmented{
+    display:flex;gap:5px;padding:5px;margin:16px 0 20px;
+    background:rgba(9,14,12,.5);
+    border:1px solid var(--line);border-radius:15px;
+  }
+  .seg{
+    flex:1;padding:12px 8px;border:none;border-radius:11px;background:transparent;
+    color:var(--muted);font-weight:700;font-size:13.5px;letter-spacing:.01em;
+    transition:background .18s,color .18s,box-shadow .18s;
+  }
+  .seg.active{
+    background:linear-gradient(135deg,var(--brand),var(--brand2));color:#05130c;
+    box-shadow:0 8px 20px -8px rgba(61,220,132,.55);
+  }
+  .tab-panel{animation:cardIn .3s var(--ease) both}
+  @media (prefers-reduced-motion:reduce){.tab-panel{animation:none}}
+  .cta-outline{
+    width:100%;padding:16px;border-radius:15px;
+    background:rgba(61,220,132,.1);border:1px solid rgba(61,220,132,.4);
+    color:var(--sage);font-weight:800;font-size:15px;letter-spacing:.02em;
+    transition:background .18s,border-color .18s,transform .12s var(--ease);
+  }
+  .cta-outline:hover{background:rgba(61,220,132,.18);border-color:rgba(61,220,132,.6)}
+  .cta-outline:active{transform:scale(.99)}
+  .tip{
+    margin-top:16px;font-size:12.5px;line-height:1.85;color:#b7c6bd;
+    background:rgba(255,255,255,.04);border:1px solid var(--line);
+    border-radius:14px;padding:13px 15px;
+  }
   .field{margin-bottom:18px}
   .field label{
     display:block;font-size:12.5px;font-weight:700;color:var(--muted);
@@ -452,69 +482,81 @@
   </div>
 
   <div class="setup-card" id="kioskCard">
-    <h1><span class="win">🪟</span>ノエルミート</h1>
-    <p class="sub">拠点の窓 — 各店舗をカメラと音声で24時間つなぎっぱなしにする常時接続アプリです。全拠点で同じ合言葉を入力してください。</p>
+    <h1><span class="win">🌿</span>ノエルミート</h1>
 
-    <div class="field">
-      <label for="inRoom">合言葉（全拠点で同じもの・8文字以上）</label>
-      <div class="roomrow">
-        <input id="inRoom" type="text" placeholder="例：xk7m-p2q9-w4t8" autocomplete="off">
-        <button id="genBtn" type="button" class="mini" title="推測されにくい合言葉をランダム生成">🎲 生成</button>
-      </div>
+    <!-- モード切替タブ（顧客が既定）。?m=(顧客)は別カードなのでここは出ない。?room=(SV)はJSでタブを隠す -->
+    <div class="segmented" id="modeTabs">
+      <button type="button" class="seg active" data-panel="panelMeet">👥 顧客と打ち合わせ</button>
+      <button type="button" class="seg" data-panel="panelKiosk">🏢 拠点をつなぐ</button>
     </div>
 
-    <div class="row2">
-      <div class="field">
-        <label for="inCount">拠点の数</label>
-        <select id="inCount">
-          <option value="2">2 拠点</option>
-          <option value="3" selected>3 拠点</option>
-          <option value="4">4 拠点</option>
-          <option value="5">5 拠点</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="inMe">この端末の拠点</label>
-        <select id="inMe"></select>
-      </div>
-    </div>
-
-    <div class="field">
-      <label for="inName">この拠点の表示名</label>
-      <input id="inName" type="text" placeholder="例：一宮本社" autocomplete="off">
-    </div>
-
-    <details class="optset">
-      <summary>録画の保存先（Google ドライブ・任意）</summary>
-      <div class="field">
-        <label for="inClientId">Google OAuth クライアントID</label>
-        <input id="inClientId" type="text" placeholder="xxxx.apps.googleusercontent.com" autocomplete="off">
-      </div>
-      <div class="field">
-        <label for="inFolder">保存先フォルダ（URL または ID）</label>
-        <input id="inFolder" type="text" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off">
-      </div>
-      <p class="hint">未設定でも録画はできます（この端末へのダウンロード保存）。フォルダが空欄ならマイドライブ直下に保存。クライアントIDの作り方は README 参照。</p>
-    </details>
-
-    <button id="startBtn">この拠点でつなぐ</button>
-
-    <ul class="notes">
-      <li>初回はカメラ・マイクの許可ダイアログが表示されます。「許可」を選んでください。</li>
-      <li>スピーカーは各拠点1台にしてください（複数鳴るとハウリングします）。</li>
-      <li>エコーキャンセラー付きの会議用スピーカーマイクを推奨します。</li>
-    </ul>
-
-    <div class="meetgen">
-      <div class="meetgen-title">顧客とのオンライン打ち合わせ</div>
-      <button id="meetGenBtn" type="button" class="mini wide">📅 打ち合わせリンクを発行</button>
+    <!-- ① 顧客とのオンライン打ち合わせ（既定・メイン） -->
+    <div class="tab-panel" id="panelMeet">
+      <p class="sub">お客様とのオンライン打ち合わせ用リンクを発行します。相手に送って、時間になったらお互い開くだけ。<b>お客様はアプリ不要・登録不要</b>で参加できます。</p>
+      <button id="meetGenBtn" type="button" class="cta-outline">📅 打ち合わせリンクを発行</button>
       <div id="meetGenOut" hidden>
         <div class="linkrow">
           <input id="meetUrlOut" readonly>
           <button id="meetCopyBtn" type="button" class="mini">コピー</button>
         </div>
-        <p class="hint">このリンクを LINE やメールで相手に送ってください。時間になったら、お互いこのリンクを開くだけで繋がります（最大5人・有効期限なし・使い捨て推奨）。</p>
+        <p class="hint">このリンクを LINE やメールでお客様に送ってください（最大5人・使い捨て推奨）。時間になったらお互い開くだけで繋がります。</p>
       </div>
+      <div class="tip">💡 <b>ノエルシステムの予約</b>から取ると、確認メール送信・担当カレンダー登録・商談後のAI要約（→日報自動化）まで自動でつながります。ふだんはそちらが便利です。</div>
+    </div>
+
+    <!-- ② 拠点をつなぐ（社内・24時間常時接続「拠点の窓」） -->
+    <div class="tab-panel" id="panelKiosk" hidden>
+      <p class="sub">各店舗をカメラと音声で24時間つなぎっぱなしにする常時接続（拠点の窓）です。全拠点で同じ合言葉を入力してください。</p>
+
+      <div class="field">
+        <label for="inRoom">合言葉（全拠点で同じもの・8文字以上）</label>
+        <div class="roomrow">
+          <input id="inRoom" type="text" placeholder="例：xk7m-p2q9-w4t8" autocomplete="off">
+          <button id="genBtn" type="button" class="mini" title="推測されにくい合言葉をランダム生成">🎲 生成</button>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label for="inCount">拠点の数</label>
+          <select id="inCount">
+            <option value="2">2 拠点</option>
+            <option value="3" selected>3 拠点</option>
+            <option value="4">4 拠点</option>
+            <option value="5">5 拠点</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="inMe">この端末の拠点</label>
+          <select id="inMe"></select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="inName">この拠点の表示名</label>
+        <input id="inName" type="text" placeholder="例：一宮本社" autocomplete="off">
+      </div>
+
+      <details class="optset">
+        <summary>録画の保存先（Google ドライブ・任意）</summary>
+        <div class="field">
+          <label for="inClientId">Google OAuth クライアントID</label>
+          <input id="inClientId" type="text" placeholder="xxxx.apps.googleusercontent.com" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="inFolder">保存先フォルダ（URL または ID）</label>
+          <input id="inFolder" type="text" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off">
+        </div>
+        <p class="hint">未設定でも録画はできます（この端末へのダウンロード保存）。フォルダが空欄ならマイドライブ直下に保存。クライアントIDの作り方は README 参照。</p>
+      </details>
+
+      <button id="startBtn">この拠点でつなぐ</button>
+
+      <ul class="notes">
+        <li>初回はカメラ・マイクの許可ダイアログが表示されます。「許可」を選んでください。</li>
+        <li>スピーカーは各拠点1台にしてください（複数鳴るとハウリングします）。</li>
+        <li>エコーキャンセラー付きの会議用スピーカーマイクを推奨します。</li>
+      </ul>
     </div>
   </div>
 </div>
@@ -1517,6 +1559,17 @@ async function requestWakeLock(){
 rebuildMeOptions();
 loadSettings();
 
+/* ---- モード切替タブ（顧客と打ち合わせ／拠点をつなぐ）。既定=顧客 ---- */
+(function(){
+  const tabs = document.querySelectorAll('#modeTabs .seg');
+  const show = key => {
+    tabs.forEach(b => b.classList.toggle('active', b.dataset.panel === key));
+    $('panelMeet').hidden = key !== 'panelMeet';
+    $('panelKiosk').hidden = key !== 'panelKiosk';
+  };
+  tabs.forEach(b => b.addEventListener('click', () => show(b.dataset.panel)));
+})();
+
 /* ================= ミーティングリンク対応（?room=） =================
    ノエルFC管理システムのSVミーティング予約リンクから開いた場合：
    合言葉はURLで指定済み。参加する側（本部SV／店舗）を選ぶだけで入室できる */
@@ -1524,6 +1577,10 @@ loadSettings();
   const urlRoom = (new URLSearchParams(location.search).get('room') || '').trim();
   if(!urlRoom) return;
   window.__meetLink = true;
+  // SV参加リンクは拠点フィールドを使うので、タブを隠して拠点パネルを直接表示
+  const tabsEl = $('modeTabs'); if(tabsEl) tabsEl.style.display = 'none';
+  $('panelMeet').hidden = true;
+  $('panelKiosk').hidden = false;
   $('inRoom').value = urlRoom;
   $('inRoom').readOnly = true;
   $('inCount').value = '2';
@@ -1532,7 +1589,7 @@ loadSettings();
   meSel.options[0].textContent = '本部（SV）として参加';
   meSel.options[1].textContent = '店舗として参加';
   meSel.value = '2';  // リンクを開くのは主に店舗側
-  const sub = document.querySelector('#kioskCard .sub');
+  const sub = document.querySelector('#panelKiosk .sub');
   if(sub) sub.textContent = 'SVミーティングのリンクから開いています。参加する側と表示名を確認して「ミーティングに参加する」を押してください（相手も同じリンクから入ります）。';
   const meLabel = document.querySelector('label[for="inMe"]');
   if(meLabel) meLabel.textContent = '参加する側';
