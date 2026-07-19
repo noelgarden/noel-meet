@@ -1396,8 +1396,16 @@ function startMeetRec(){
     const d = new Date();
     const p = x => String(x).padStart(2, '0');
     const name = `商談音声_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.webm`;
-    downloadLocal(blob, name);
-    toast('商談音声を保存しました。ノエルシステムの予約カード「🧠AI要約」からアップすると自動で要約・日報化されます');
+    // v2.127 予約由来（?m=）の商談ならノエルシステムへ直接連携→自動でカルテ・日報化。失敗時は端末保存にフォールバック
+    if (MEET_TOKEN) {
+      sendMeetAudioToNoel(blob).catch(() => {
+        downloadLocal(blob, name);
+        toast('自動連携できなかったため端末に保存しました。ノエルシステムの予約カード「🧠AI要約」からアップしてください');
+      });
+    } else {
+      downloadLocal(blob, name);
+      toast('商談音声を保存しました。ノエルシステムの予約カード「🧠AI要約」からアップすると自動で要約・日報化されます');
+    }
   };
   rec.start(1000);
   meetRec = rec; meetRecStart = Date.now();
@@ -1418,6 +1426,24 @@ $('meetRecBtn').addEventListener('click', () => {
   if(meetRec) stopMeetRec();
   else startMeetRec();
 });
+
+/* ---- v2.127 商談音声をノエルシステムへ直接連携（署名アップロードURL→PUT→AI要約→カルテ・日報化） ---- */
+const NOEL_API = 'https://noel-fc.vercel.app/api/meet-booking';
+async function sendMeetAudioToNoel(blob){
+  if(!MEET_TOKEN) throw new Error('予約トークンがありません');
+  if(blob.size > 20*1024*1024) throw new Error('録音が長すぎます（20分以内で分割してください）');
+  toast('商談音声をノエルシステムへ送信中…');
+  const u = await fetch(NOEL_API, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'meet_audio_url', m: MEET_TOKEN, ext:'webm' }) });
+  const uj = await u.json().catch(()=>({}));
+  if(!uj.ok || !uj.uploadUrl) throw new Error(uj.error || 'アップロードURLの発行に失敗');
+  const put = await fetch(uj.uploadUrl, { method:'PUT', headers:{'Content-Type':'audio/webm','x-upsert':'true'}, body: blob });
+  if(!put.ok) throw new Error('アップロード失敗（'+put.status+'）');
+  toast('AIが商談を要約しています…（カルテ・日報に自動反映されます）');
+  const dn = await fetch(NOEL_API, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'meet_audio_done', m: MEET_TOKEN, path: uj.path }) });
+  const dj = await dn.json().catch(()=>({}));
+  if(!dj.ok) throw new Error(dj.error || 'AI要約に失敗');
+  toast('✅ 商談をノエルシステムのカルテ・日報に自動反映しました！');
+}
 
 /* ---- Google ドライブへの保存 ---- */
 function ensureDriveToken(){
