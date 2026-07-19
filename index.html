@@ -494,6 +494,7 @@
     <button class="ctl" id="camBtn" title="カメラ" aria-label="カメラの切替">🎥</button>
     <button class="ctl" id="shareBtn" title="画面共有" aria-label="画面共有の切替">🖥️</button>
     <button class="ctl" id="recBtn" title="録画" aria-label="録画の開始/停止">⏺</button>
+    <button class="ctl" id="meetRecBtn" title="AI要約用録音（音声のみ）" aria-label="AI要約用の録音" hidden>🎙️</button>
     <button class="ctl" id="fsBtn" title="全画面" aria-label="全画面の切替">⛶</button>
     <button class="ctl danger" id="hangBtn" title="切断" aria-label="切断">✕</button>
   </div>
@@ -742,7 +743,12 @@ function startMain(){
   $('setup').classList.add('hidden');
   $('main').classList.add('active');
 
-  if(state.mode === 'meet') document.body.classList.add('meet');
+  if(state.mode === 'meet'){
+    document.body.classList.add('meet');
+    // 会議モードは商談用＝重い動画録画(⏺)ではなくAI要約用の音声録音(🎙️)を出す
+    $('recBtn').style.display = 'none';
+    $('meetRecBtn').hidden = false;
+  }
   // スマホ等、画面共有に対応しない端末ではボタンを出さない
   if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){
     $('shareBtn').style.display = 'none';
@@ -1262,6 +1268,66 @@ function stopRecording(){
 $('recBtn').addEventListener('click', () => {
   if(state.recorder) stopRecording();
   else startRecording();
+});
+
+/* ---- AI要約用の録音（音声のみ・軽量）：会議モード専用 ---- */
+let meetRec = null, meetRecChunks = [], meetRecTimer = null, meetRecStart = 0;
+function updateMeetRecBadge(){
+  const s = Math.floor((Date.now() - meetRecStart) / 1000);
+  const p = x => String(x).padStart(2, '0');
+  $('recBadge').textContent = `🎙 録音 ${p(Math.floor(s/60))}:${p(s%60)}`;
+}
+function startMeetRec(){
+  if(typeof MediaRecorder === 'undefined'){ toast('この端末は録音に対応していません'); return; }
+  // 全参加者の音声をミックス（自分＋各拠点）
+  const actx = new (window.AudioContext || window.webkitAudioContext)();
+  const dest = actx.createMediaStreamDestination();
+  if(actx.createConstantSource){ // 無音源で音声フレームを絶やさない
+    const sil = actx.createConstantSource(); const g = actx.createGain(); g.gain.value = 0;
+    sil.connect(g).connect(dest); sil.start();
+  }
+  actx.resume().catch(() => {});
+  const added = new Set();
+  const add = st => { if(st && !added.has(st) && st.getAudioTracks().length){ try{ actx.createMediaStreamSource(st).connect(dest); added.add(st); }catch(e){} } };
+  add(state.localStream);
+  for(let n = 1; n <= state.count; n++){ const v = $(`video-${n}`); if(v && v.srcObject) add(v.srcObject); }
+  state.recAddAudio = add;  // 録音中に参加した拠点の音声も拾う（adoptCallのstreamで呼ばれる）
+  const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+  let rec;
+  try{ rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 40000 }); }
+  catch(e){ try{ actx.close(); }catch(_){} toast(`録音を開始できませんでした（${e.name}）`); return; }
+  meetRecChunks = [];
+  rec.ondataavailable = e => { if(e.data && e.data.size) meetRecChunks.push(e.data); };
+  rec.onstop = () => {
+    try{ actx.close(); }catch(e){}
+    state.recAddAudio = null;
+    const blob = new Blob(meetRecChunks, { type: 'audio/webm' });
+    meetRecChunks = [];
+    if(blob.size < 2000){ toast('録音が短すぎました'); return; }
+    const d = new Date();
+    const p = x => String(x).padStart(2, '0');
+    const name = `商談音声_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.webm`;
+    downloadLocal(blob, name);
+    toast('商談音声を保存しました。ノエルシステムの予約カード「🧠AI要約」からアップすると自動で要約・日報化されます');
+  };
+  rec.start(1000);
+  meetRec = rec; meetRecStart = Date.now();
+  $('meetRecBtn').classList.add('rec-on');
+  $('recBadge').hidden = false; updateMeetRecBadge();
+  meetRecTimer = setInterval(updateMeetRecBadge, 1000);
+  toast('AI要約用の録音を開始（音声のみ）。お客様に録音の一声かけをお願いします');
+}
+function stopMeetRec(){
+  if(!meetRec) return;
+  const r = meetRec; meetRec = null;
+  clearInterval(meetRecTimer);
+  $('meetRecBtn').classList.remove('rec-on');
+  $('recBadge').hidden = true;
+  try{ r.stop(); }catch(e){}
+}
+$('meetRecBtn').addEventListener('click', () => {
+  if(meetRec) stopMeetRec();
+  else startMeetRec();
 });
 
 /* ---- Google ドライブへの保存 ---- */
