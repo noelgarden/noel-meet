@@ -581,6 +581,7 @@
   <div id="controls">
     <button class="ctl" id="micBtn" title="マイク" aria-label="マイクの切替">🎤</button>
     <button class="ctl" id="camBtn" title="カメラ" aria-label="カメラの切替">🎥</button>
+    <button class="ctl" id="bgBtn" title="背景（ぼかし・バーチャル背景）" aria-label="背景の切替">🌫️</button>
     <button class="ctl" id="shareBtn" title="画面共有" aria-label="画面共有の切替">🖥️</button>
     <button class="ctl" id="recBtn" title="録画" aria-label="録画の開始/停止">⏺</button>
     <button class="ctl" id="meetRecBtn" title="AI要約用録音（音声のみ）" aria-label="AI要約用の録音" hidden>🎙️</button>
@@ -1114,13 +1115,17 @@ function adoptCall(call, knownN){
     const video = $(`video-${n}`);
     if(video && video.srcObject !== stream) video.srcObject = stream;
     setTileStatus(n, 'connected');
-    // 画面共有中に確立した接続にも共有映像を流す
+    // 画面共有中に確立した接続にも共有映像を流す（共有していなければ背景処理後の映像）
     if(state.screenStream){
       const track = state.screenStream.getVideoTracks()[0];
       if(track && track.readyState === 'live') replaceVideoOnCall(call, track);
+    }else if(bgState.track && bgCurrent().key !== 'off'){
+      replaceVideoOnCall(call, bgState.track);
     }
     // 録画中に接続してきた拠点の音声も録音に追加
     if(state.recAddAudio) state.recAddAudio(stream);
+    // v2.1 商談は相手が入ってきた時点で自動的にAI議事録の録音を始める（押し忘れ防止）
+    maybeAutoStartMeetRec();
   });
 
   const drop = () => {
@@ -1164,6 +1169,147 @@ function replaceVideoOnAllCalls(track){
   state.calls.forEach(call => replaceVideoOnCall(call, track));
 }
 
+/* ================= v2.1 背景（ぼかし／バーチャル背景） =================
+   カメラ映像を一度キャンバスに描き直して相手へ送る仕組み。
+   人物と背景の切り分けは MediaPipe Selfie Segmentation（CDNから遅延読込）。
+   ・🌫️ を押すたび  なし → ぼかし → ぼかし（強） → グリーン背景 → なし
+   ・端末が非力／CDNに繋がらない場合はボタンを隠して従来どおり素のカメラで動く（フェイルソフト）
+   ・画面共有中は共有映像が優先。共有をやめると背景つきカメラに自動で戻る。            */
+const BG_MODES = [
+  { key:'off',    label:'背景なし',           icon:'🌫️' },
+  { key:'blur',   label:'背景ぼかし',         icon:'🌫️' },
+  { key:'blur2',  label:'背景ぼかし（強）',   icon:'🌁' },
+  { key:'green',  label:'ノエルグリーン背景', icon:'🟩' },
+];
+const bgState = { i:0, seg:null, loading:false, canvas:null, ctx:null, track:null, raf:0, srcVideo:null, failed:false };
+
+function bgCurrent(){ return BG_MODES[bgState.i]; }
+
+async function loadSegmenter(){
+  if(bgState.seg) return bgState.seg;
+  if(bgState.failed) return null;
+  await new Promise((resolve, reject) => {
+    if(window.SelfieSegmentation) return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('cdn'));
+    document.head.appendChild(s);
+  });
+  const seg = new window.SelfieSegmentation({
+    locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/' + f,
+  });
+  seg.setOptions({ modelSelection: 1, selfieMode: false });
+  seg.onResults(drawBgFrame);
+  bgState.seg = seg;
+  return seg;
+}
+
+function drawBgFrame(res){
+  const c = bgState.canvas, ctx = bgState.ctx;
+  if(!c || !ctx || !res.image) return;
+  const mode = bgCurrent().key;
+  const w = c.width, h = c.height;
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  // ① 人物のシルエットで切り抜く
+  ctx.drawImage(res.segmentationMask, 0, 0, w, h);
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.drawImage(res.image, 0, 0, w, h);
+  // ② その後ろに背景を敷く
+  ctx.globalCompositeOperation = 'destination-over';
+  if(mode === 'green'){
+    const g = ctx.createLinearGradient(0, 0, w, h);
+    g.addColorStop(0, '#0f3d2a'); g.addColorStop(1, '#1f6b46');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  }else{
+    ctx.filter = mode === 'blur2' ? 'blur(20px)' : 'blur(10px)';
+    ctx.drawImage(res.image, 0, 0, w, h);
+    ctx.filter = 'none';
+  }
+  ctx.restore();
+}
+
+async function bgLoop(){
+  if(bgCurrent().key === 'off' || !bgState.seg) return;
+  const v = bgState.srcVideo;
+  const cam = state.localStream ? state.localStream.getVideoTracks()[0] : null;
+  if(cam && !cam.enabled){
+    // カメラOFF中は人物を描かず、背景だけ（＝真っ黒にならず、切ったことが相手に伝わる）
+    const c = bgState.canvas, ctx = bgState.ctx;
+    if(c && ctx){ ctx.fillStyle = '#0f1a15'; ctx.fillRect(0, 0, c.width, c.height); }
+    bgState.raf = requestAnimationFrame(bgLoop);
+    return;
+  }
+  if(v && v.readyState >= 2){
+    try{ await bgState.seg.send({ image: v }); }catch(e){ /* 1フレーム落ちても続行 */ }
+  }
+  bgState.raf = requestAnimationFrame(bgLoop);
+}
+
+async function applyBackground(){
+  const mode = bgCurrent();
+  $('bgBtn').textContent = mode.icon;
+  $('bgBtn').classList.toggle('active', mode.key !== 'off');
+
+  if(mode.key === 'off'){
+    cancelAnimationFrame(bgState.raf); bgState.raf = 0;
+    if(bgState.track){ try{ bgState.track.stop(); }catch(e){} bgState.track = null; }
+    const cam = state.localStream ? state.localStream.getVideoTracks()[0] : null;
+    if(cam && !state.screenStream){ replaceVideoOnAllCalls(cam); $('selfVideo').srcObject = state.localStream; }
+    toast('背景を元に戻しました');
+    return;
+  }
+
+  if(!bgState.seg){
+    if(bgState.loading) return;
+    bgState.loading = true;
+    toast('背景処理を準備中…（初回だけ少し待ちます）');
+    try{ await loadSegmenter(); }
+    catch(e){
+      bgState.failed = true; bgState.loading = false; bgState.i = 0;
+      $('bgBtn').style.display = 'none';
+      toast('この回線／端末では背景処理を使えませんでした');
+      return;
+    }
+    bgState.loading = false;
+  }
+
+  // 送出用キャンバスと、素のカメラ映像を流し込む隠しvideo を用意
+  if(!bgState.canvas){
+    const cam = state.localStream.getVideoTracks()[0];
+    const s = cam.getSettings ? cam.getSettings() : {};
+    const c = document.createElement('canvas');
+    c.width = s.width || 1280; c.height = s.height || 720;
+    bgState.canvas = c; bgState.ctx = c.getContext('2d');
+    const v = document.createElement('video');
+    v.autoplay = true; v.playsInline = true; v.muted = true;
+    v.srcObject = new MediaStream([cam]);
+    await v.play().catch(() => {});
+    bgState.srcVideo = v;
+  }
+  if(!bgState.track){
+    bgState.track = bgState.canvas.captureStream(24).getVideoTracks()[0];
+    if(!state.screenStream){
+      replaceVideoOnAllCalls(bgState.track);
+      $('selfVideo').srcObject = new MediaStream([bgState.track].concat(state.localStream.getAudioTracks()));
+    }
+  }
+  if(!bgState.raf) bgLoop();
+  toast(mode.label + 'にしました');
+}
+
+$('bgBtn').addEventListener('click', () => {
+  bgState.i = (bgState.i + 1) % BG_MODES.length;
+  applyBackground();
+});
+// 背景処理中のカメラON/OFF・画面共有解除でも、送出中のトラックを取り違えないようにする
+function currentCameraTrack(){
+  return (bgState.track && bgCurrent().key !== 'off')
+    ? bgState.track
+    : (state.localStream ? state.localStream.getVideoTracks()[0] : null);
+}
+
 async function startScreenShare(){
   if(!navigator.mediaDevices.getDisplayMedia){
     toast('この端末は画面共有に対応していません');
@@ -1196,9 +1342,11 @@ function stopScreenShare(){
   if(!state.screenStream) return;
   state.screenStream.getTracks().forEach(t => t.stop());
   state.screenStream = null;
-  const camTrack = state.localStream ? state.localStream.getVideoTracks()[0] : null;
+  const camTrack = currentCameraTrack();   // 背景処理中ならその映像に戻す
   if(camTrack) replaceVideoOnAllCalls(camTrack);
-  $('selfVideo').srcObject = state.localStream;
+  $('selfVideo').srcObject = (bgState.track && bgCurrent().key !== 'off')
+    ? new MediaStream([bgState.track].concat(state.localStream.getAudioTracks()))
+    : state.localStream;
   $('selfWrap').classList.remove('sharing');
   $('selfLabel').textContent = `${siteName(state.me)}（自分）`;
   $('shareBtn').classList.remove('active');
@@ -1361,13 +1509,25 @@ $('recBtn').addEventListener('click', () => {
 
 /* ---- AI要約用の録音（音声のみ・軽量）：会議モード専用 ---- */
 let meetRec = null, meetRecChunks = [], meetRecTimer = null, meetRecStart = 0;
+let meetRecFlush = null;   // v2.1 送信完了を待つためのPromise（切断時にこれをawaitする）
 function updateMeetRecBadge(){
   const s = Math.floor((Date.now() - meetRecStart) / 1000);
   const p = x => String(x).padStart(2, '0');
-  $('recBadge').textContent = `🎙 録音 ${p(Math.floor(s/60))}:${p(s%60)}`;
+  $('recBadge').textContent = `🔴 録音中（AI議事録） ${p(Math.floor(s/60))}:${p(s%60)}`;
 }
-function startMeetRec(){
-  if(typeof MediaRecorder === 'undefined'){ toast('この端末は録音に対応していません'); return; }
+/* v2.1 押し忘れ防止：商談モードで相手が入室したら自動で録音を始める。
+   ・黙って録らないよう、画面には常時「🔴 録音中（AI議事録）」バッジを出す（相手からも見える文言をこちらが読み上げる運用）
+   ・一度手で止めたら勝手には再開しない（止めた人の判断を尊重）
+   ・切断時は自動で停止＋ノエルシステムへ送信（送信完了を待ってからページを閉じる）        */
+let meetAutoRecArmed = true;
+function maybeAutoStartMeetRec(){
+  if(state.mode !== 'meet' || !MEET_TOKEN) return;   // 予約リンク由来の商談のみ
+  if(meetRec || !meetAutoRecArmed) return;
+  meetAutoRecArmed = false;
+  setTimeout(() => { if(!meetRec) startMeetRec(true); }, 1500);   // 音声が繋がるのを少し待つ
+}
+function startMeetRec(auto){
+  if(typeof MediaRecorder === 'undefined'){ if(!auto) toast('この端末は録音に対応していません'); return; }
   // 全参加者の音声をミックス（自分＋各拠点）
   const actx = new (window.AudioContext || window.webkitAudioContext)();
   const dest = actx.createMediaStreamDestination();
@@ -1388,31 +1548,37 @@ function startMeetRec(){
   meetRecChunks = [];
   rec.ondataavailable = e => { if(e.data && e.data.size) meetRecChunks.push(e.data); };
   rec.onstop = () => {
-    try{ actx.close(); }catch(e){}
-    state.recAddAudio = null;
-    const blob = new Blob(meetRecChunks, { type: 'audio/webm' });
-    meetRecChunks = [];
-    if(blob.size < 2000){ toast('録音が短すぎました'); return; }
-    const d = new Date();
-    const p = x => String(x).padStart(2, '0');
-    const name = `商談音声_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.webm`;
-    // v2.127 予約由来（?m=）の商談ならノエルシステムへ直接連携→自動でカルテ・日報化。失敗時は端末保存にフォールバック
-    if (MEET_TOKEN) {
-      sendMeetAudioToNoel(blob).catch(() => {
+    // 切断時に「送信し終わるまで待つ」ため、後処理をPromiseとして残しておく
+    meetRecFlush = (async () => {
+      try{ actx.close(); }catch(e){}
+      state.recAddAudio = null;
+      const blob = new Blob(meetRecChunks, { type: 'audio/webm' });
+      meetRecChunks = [];
+      if(blob.size < 2000){ toast('録音が短すぎました'); return; }
+      const d = new Date();
+      const p = x => String(x).padStart(2, '0');
+      const name = `商談音声_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.webm`;
+      // v2.127 予約由来（?m=）の商談ならノエルシステムへ直接連携→自動でカルテ・日報化。失敗時は端末保存にフォールバック
+      if (MEET_TOKEN) {
+        try{ await sendMeetAudioToNoel(blob); }
+        catch(e){
+          downloadLocal(blob, name);
+          toast('自動連携できなかったため端末に保存しました。ノエルシステムの予約カード「🧠AI要約」からアップしてください');
+        }
+      } else {
         downloadLocal(blob, name);
-        toast('自動連携できなかったため端末に保存しました。ノエルシステムの予約カード「🧠AI要約」からアップしてください');
-      });
-    } else {
-      downloadLocal(blob, name);
-      toast('商談音声を保存しました。ノエルシステムの予約カード「🧠AI要約」からアップすると自動で要約・日報化されます');
-    }
+        toast('商談音声を保存しました。ノエルシステムの予約カード「🧠AI要約」からアップすると自動で要約・日報化されます');
+      }
+    })();
   };
   rec.start(1000);
   meetRec = rec; meetRecStart = Date.now();
   $('meetRecBtn').classList.add('rec-on');
   $('recBadge').hidden = false; updateMeetRecBadge();
   meetRecTimer = setInterval(updateMeetRecBadge, 1000);
-  toast('AI要約用の録音を開始（音声のみ）。お客様に録音の一声かけをお願いします');
+  toast(auto
+    ? 'AI議事録の録音を自動で開始しました（音声のみ）。「記録に取らせてください」と一声お願いします'
+    : 'AI要約用の録音を開始（音声のみ）。お客様に録音の一声かけをお願いします');
 }
 function stopMeetRec(){
   if(!meetRec) return;
@@ -1423,8 +1589,13 @@ function stopMeetRec(){
   try{ r.stop(); }catch(e){}
 }
 $('meetRecBtn').addEventListener('click', () => {
-  if(meetRec) stopMeetRec();
-  else startMeetRec();
+  if(meetRec){ meetAutoRecArmed = false; stopMeetRec(); }   // 手で止めたら自動では再開しない
+  else startMeetRec(false);
+});
+// 録音中にタブを閉じようとしたら引き留める（議事録を取りこぼさないため）
+window.addEventListener('beforeunload', e => {
+  if(!meetRec) return;
+  e.preventDefault(); e.returnValue = '';
 });
 
 /* ---- v2.127 商談音声をノエルシステムへ直接連携（署名アップロードURL→PUT→AI要約→カルテ・日報化） ---- */
@@ -1553,20 +1724,27 @@ $('fsBtn').addEventListener('click', () => {
   }
 });
 
-$('hangBtn').addEventListener('click', () => {
+$('hangBtn').addEventListener('click', async () => {
   const end = state.mode === 'meet' ? '打ち合わせを退出しますか？' : '接続を終了しますか？';
   const msg = state.recorder
     ? `録画中です。終了すると録画は破棄されます。${end}`
-    : end;
+    : (meetRec ? `AI議事録を録音中です。退出すると録音を止めてノエルシステムへ送信します。${end}` : end);
   if(!confirm(msg)) return;
   state.started = false;
   clearInterval(state.loopTimer);
+  // v2.1 録音中なら、送信し終わるまでページを閉じない（議事録の取りこぼし防止）
+  if(meetRec){
+    stopMeetRec();
+    toast('AI議事録を送信しています。閉じずにお待ちください…');
+    try{ await meetRecFlush; }catch(e){}
+  }
   state.calls.forEach(c => { try{ c.close(); }catch(e){} });
   state.calls.clear();
   if(state.peer){ try{ state.peer.destroy(); }catch(e){} }
   if(state.screenStream){
     state.screenStream.getTracks().forEach(t => t.stop());
   }
+  if(bgState.track){ try{ bgState.track.stop(); }catch(e){} }
   if(state.localStream){
     state.localStream.getTracks().forEach(t => t.stop());
   }
