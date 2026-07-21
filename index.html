@@ -877,7 +877,7 @@ function startMain(){
       try{ state.peer.reconnect(); }catch(e){}
     }
     connectAll();
-  }, 6000);
+  }, 3000);
 }
 
 function buildGrid(){
@@ -1054,7 +1054,14 @@ function initPeer(){
         if(state.started) initPeer();
       }, 5000);
     }else if(err.type === 'peer-unavailable'){
-      // 相手が未参加なだけ。再接続ループが拾う
+      // 相手がまだ入っていないだけ。握ったままの失敗発信を消して、次のループですぐ再発信できるようにする
+      // （これをしないと「先に入った人 → 後から入る人」への発信が最大10秒ブロックされ、黒画面のまま詰まる）
+      const idm = /peer\s+(\S+)/.exec(String(err.message || ''));
+      const n = idm ? remoteNumber(idm[1]) : null;
+      if(n != null && state.calls.has(n)){
+        const c = state.calls.get(n);
+        if(!c.open){ try{ c.close(); }catch(e){} state.calls.delete(n); setTileStatus(n, 'offline'); }
+      }
     }else{
       toast(`接続エラー：${err.type || err.message}`);
     }
@@ -1074,8 +1081,8 @@ function connectAll(){
     const existing = state.calls.get(n);
     if(existing){
       if(existing.open) continue;
-      // 発信直後は1サイクル猶予（重複発信の防止）
-      if(Date.now() - (existing._startedAt || 0) < 10000) continue;
+      // 発信したのに開通しない発信は、短い猶予のあと張り直す（3人目が黒画面のまま詰まるのを防ぐ）
+      if(Date.now() - (existing._startedAt || 0) < 4000) continue;
       try{ existing.close(); }catch(e){}
       state.calls.delete(n);
     }
@@ -1113,7 +1120,10 @@ function adoptCall(call, knownN){
 
   call.on('stream', stream => {
     const video = $(`video-${n}`);
-    if(video && video.srcObject !== stream) video.srcObject = stream;
+    if(video){
+      if(video.srcObject !== stream) video.srcObject = stream;
+      video.play().catch(() => {});   // autoplay がブロックされて黒画面になるのを防ぐ
+    }
     setTileStatus(n, 'connected');
     // 画面共有中に確立した接続にも共有映像を流す（共有していなければ背景処理後の映像）
     if(state.screenStream){
