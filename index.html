@@ -3,15 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<!-- 外部スクリプトの読み込みを禁止（PeerJSは自前ホスト）。CDN改ざん・スクリプト注入対策 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src https://*.peerjs.com wss://*.peerjs.com https://www.googleapis.com https://accounts.google.com https://oauth2.googleapis.com; media-src 'self' blob:; img-src 'self' data:; frame-src https://accounts.google.com; object-src 'none'; base-uri 'none'">
+<!-- 自前スクリプトとハッシュが一致するアプリのみ許可。Google認証は録画設定時のみ読み込む。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-kNoaM7IgcZe2HjELxaIgdDtBXtJdYW14RA+v9H9LlaU=' https://accounts.google.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src https://*.peerjs.com wss://*.peerjs.com https://www.googleapis.com https://accounts.google.com https://oauth2.googleapis.com; media-src 'self' blob:; img-src 'self' data:; frame-src https://accounts.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>ノエルミート — 拠点の窓</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap" rel="stylesheet">
 <script src="peerjs.min.js"></script>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="peer-auth.js"></script>
+
 <style>
   :root{
     --bg:#080c0a;
@@ -511,7 +512,7 @@
       <div class="field">
         <label for="inRoom">合言葉（全拠点で同じもの・8文字以上）</label>
         <div class="roomrow">
-          <input id="inRoom" type="text" placeholder="例：xk7m-p2q9-w4t8" autocomplete="off">
+          <input id="inRoom" type="password" placeholder="例：xk7m-p2q9-w4t8" autocomplete="off">
           <button id="genBtn" type="button" class="mini" title="推測されにくい合言葉をランダム生成">🎲 生成</button>
         </div>
       </div>
@@ -617,6 +618,8 @@ const state = {
   peer: null,
   localStream: null,
   screenStream: null,    // 画面共有中のみ非null
+  authenticated: new Map(),
+  pendingAuth: new Map(),
   calls: new Map(),      // 拠点番号 -> MediaConnection
   // 録画まわり
   clientId: '',          // Google OAuth クライアントID（未設定なら端末保存）
@@ -741,6 +744,9 @@ $('startBtn').addEventListener('click', async () => {
   state.me    = parseInt($('inMe').value, 10);
   state.name  = $('inName').value.trim();
 
+  if(!Number.isInteger(state.count) || state.count < 2 || state.count > 5 || !Number.isInteger(state.me) || state.me < 1 || state.me > state.count){
+    toast('拠点の数と番号を選び直してください'); return;
+  }
   if(!state.room){
     toast('合言葉を入力してください');
     $('inRoom').focus();
@@ -997,6 +1003,8 @@ const ICE_CONFIG = { iceServers: [
 function initPeer(){
   const peer = new Peer(peerIdFor(state.me), { config: ICE_CONFIG });
   state.peer = peer;
+  state.authenticated.clear();
+  state.pendingAuth.clear();
 
   peer.on('open', () => {
     peer._opened = true;
@@ -1004,37 +1012,27 @@ function initPeer(){
     connectAll();
   });
 
-  // 名前交換用のデータ接続（認証トークンを検証）
+  // Both endpoints must prove room knowledge before any camera/audio stream is sent.
   peer.on('connection', conn => {
-    if(!conn.metadata || conn.metadata.token !== state.authToken){
-      try{ conn.close(); }catch(e){}
-      return;
-    }
     const n = remoteNumber(conn.peer);
-    if(n == null) return;
-    if(conn.metadata.name){
-      state.names[n] = String(conn.metadata.name).slice(0, 30);
-      refreshTileName(n);
+    if(n == null || n >= state.me || state.pendingAuth.size >= 5 || state.pendingAuth.has(n)){
+      try{ conn.close(); }catch(e){} return;
     }
-    conn.on('open', () => {
-      try{ conn.send({ name: siteName(state.me) }); }catch(e){}
-    });
+    authorizeConnection(conn, false, n, peer).catch(() => {});
   });
-
-  // 着信は認証トークンを検証してから応答する（合言葉を知らない接続は拒否）
   peer.on('call', call => {
-    if(!call.metadata || call.metadata.token !== state.authToken){
-      try{ call.close(); }catch(e){}
-      toast('認証されていない接続を拒否しました');
-      return;
-    }
     const n = remoteNumber(call.peer);
-    if(n != null && call.metadata.name){
-      state.names[n] = String(call.metadata.name).slice(0, 30);
-      refreshTileName(n);
+    const auth = state.authenticated.get(n);
+    if(n == null || n >= state.me || !auth || !auth.conn.open ||
+       !call.metadata || call.metadata.proof !== auth.proof){
+      try{ call.close(); }catch(e){}
+      toast('認証されていない接続を拒否しました'); return;
     }
-    call.answer(state.localStream);
-    adoptCall(call);
+    if(call.metadata.name){
+      state.names[n] = String(call.metadata.name).slice(0, 30); refreshTileName(n);
+    }
+    auth.conn.send({name: siteName(state.me)});
+    call.answer(state.localStream); adoptCall(call, n);
   });
 
   peer.on('disconnected', () => {
@@ -1078,8 +1076,43 @@ function initPeer(){
 }
 
 function remoteNumber(peerIdStr){
+  if(typeof peerIdStr !== 'string') return null;
   const m = /-(\d+)$/.exec(peerIdStr);
-  return m ? parseInt(m[1], 10) : null;
+  const n = m ? Number(m[1]) : 0;
+  return Number.isInteger(n) && n >= 1 && n <= state.count && n !== state.me &&
+    peerIdStr === peerIdFor(n) ? n : null;
+}
+async function authorizeConnection(conn, initiator, n, peer){
+  state.pendingAuth.set(n, conn);
+  try{
+    const proof = await NoelPeerAuth.authenticate(conn, initiator, state.authToken, peerIdFor(state.me), conn.peer);
+    if(state.peer !== peer || !conn.open) { conn.close(); throw new Error('stale connection'); }
+    const old = state.authenticated.get(n);
+    if(old && old.conn !== conn) old.conn.close();
+    state.authenticated.set(n, {conn, proof});
+    conn.on('close', () => { if(state.authenticated.get(n)?.conn === conn) state.authenticated.delete(n); });
+    conn.on('data', d => {
+      if(d && typeof d.name === 'string') { state.names[n] = d.name.slice(0,30); refreshTileName(n); }
+    });
+    return proof;
+  }finally{ if(state.pendingAuth.get(n) === conn) state.pendingAuth.delete(n); }
+}
+async function connectAuthenticated(n, peer){
+  try{
+    let auth = state.authenticated.get(n);
+    if(!auth || !auth.conn.open){
+      const conn = peer.connect(peerIdFor(n), {reliable:true});
+      await authorizeConnection(conn, true, n, peer);
+      auth = state.authenticated.get(n);
+    }
+    if(state.peer !== peer || !state.started || !auth) return;
+    const existing = state.calls.get(n);
+    if(existing && existing.open) return;
+    const call = peer.call(peerIdFor(n), state.localStream, {
+      metadata: {proof:auth.proof, name:siteName(state.me)},
+    });
+    if(call){ call._startedAt = Date.now(); adoptCall(call,n); setTileStatus(n,'trying'); }
+  }catch(e){ setTileStatus(n,'offline'); }
 }
 
 // 発信は「自分より番号が大きい拠点」のみ（グレア＝二重接続の回避）
@@ -1095,31 +1128,13 @@ function connectAll(){
       try{ existing.close(); }catch(e){}
       state.calls.delete(n);
     }
-    const call = peer.call(peerIdFor(n), state.localStream, {
-      metadata: { token: state.authToken, name: siteName(state.me) },
-    });
-    if(!call) continue;
-    call._startedAt = Date.now();
-    adoptCall(call, n);
-    setTileStatus(n, 'trying');
-    // 名前交換：相手の表示名を受け取る
-    try{
-      const dc = peer.connect(peerIdFor(n), {
-        metadata: { token: state.authToken, name: siteName(state.me) },
-      });
-      dc.on('data', d => {
-        if(d && d.name){
-          state.names[n] = String(d.name).slice(0, 30);
-          refreshTileName(n);
-        }
-      });
-    }catch(e){}
+    if(!state.pendingAuth.has(n)) connectAuthenticated(n, peer);
   }
 }
 
 function adoptCall(call, knownN){
   const n = knownN != null ? knownN : remoteNumber(call.peer);
-  if(n == null || n === state.me || n > state.count) return;
+  if(n == null || n < 1 || n === state.me || n > state.count){ try{ call.close(); }catch(e){} return; }
 
   const old = state.calls.get(n);
   if(old && old !== call){
@@ -1148,7 +1163,8 @@ function adoptCall(call, knownN){
   });
 
   const drop = () => {
-    if(state.calls.get(n) === call) state.calls.delete(n);
+    if(state.calls.get(n) !== call) return;
+    state.calls.delete(n);
     const video = $(`video-${n}`);
     if(video) video.srcObject = null;
     setTileStatus(n, 'offline');
@@ -1636,7 +1652,21 @@ async function sendMeetAudioToNoel(blob){
 }
 
 /* ---- Google ドライブへの保存 ---- */
-function ensureDriveToken(){
+let driveClientLoading;
+function loadDriveClient(){
+  if(typeof google !== 'undefined' && google.accounts) return Promise.resolve();
+  if(!driveClientLoading) driveClientLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+    s.onload = resolve;
+    s.onerror = () => { driveClientLoading = null; reject(new Error('Google認証を読み込めません')); };
+    document.head.appendChild(s);
+  });
+  return driveClientLoading;
+}
+async function ensureDriveToken(){
+  if(!state.clientId) return '';
+  try{ await loadDriveClient(); }catch(e){ return ''; }
   return new Promise(resolve => {
     if(!state.clientId || typeof google === 'undefined' || !google.accounts){
       resolve('');

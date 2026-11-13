@@ -1,5 +1,5 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const html=fs.readFileSync(require('path').join(__dirname,'index.html'),'utf8');
+const html=fs.readFileSync(require('path').join(__dirname,'index.html'),'utf8').replace(/\r\n/g,'\n');
 const js=html.match(/<script>\s*('use strict';[\s\S]*?)<\/script>/)[1];new vm.Script(js);
 const start=js.indexOf('function validateKioskSettings('),end=js.indexOf('function showKioskSetup(');
 const ctx={URL,URLSearchParams};vm.createContext(ctx);vm.runInContext(js.slice(start,end),ctx);
