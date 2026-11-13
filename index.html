@@ -552,6 +552,15 @@
 
       <button id="startBtn">この拠点でつなぐ</button>
 
+      <details class="optset" id="salesgridSetup">
+        <summary>セールスグリッド 一宮・長崎を追加</summary>
+        <p class="hint">ノエル拠点で普段使っている端末・ブラウザで開いてください。保存済みのルーム設定から、2拠点の参加リンクを作ります。</p>
+        <button id="salesgridLinksBtn" type="button" class="cta-outline">保存済みの設定から追加リンクを作る</button>
+        <p id="salesgridStatus" class="hint" role="status"></p>
+        <div id="salesgridLinks"></div>
+        <p class="hint">リンクには入室用の合言葉が含まれます。利用する拠点の担当者だけに共有してください。既存の全端末も更新リンクから入り直すと、新しい2拠点につながります。</p>
+      </details>
+
       <ul class="notes">
         <li>初回はカメラ・マイクの許可ダイアログが表示されます。「許可」を選んでください。</li>
         <li>スピーカーは各拠点1台にしてください（複数鳴るとハウリングします）。</li>
@@ -1772,6 +1781,86 @@ async function requestWakeLock(){
 /* ================= 起動 ================= */
 rebuildMeOptions();
 loadSettings();
+
+/* 拠点追加リンク。合言葉は公開コード・サーバーへ保存せずURLのfragmentで渡す。 */
+function validateKioskSettings(s){
+  return s && typeof s.room === 'string' && s.room.trim().length >= 8 &&
+    Number.isInteger(s.count) && s.count >= 2 && s.count <= 5 &&
+    Number.isInteger(s.me) && s.me >= 1 && s.me <= s.count &&
+    (s.name === undefined || (typeof s.name === 'string' && s.name.length <= 80));
+}
+function buildSalesgridInvites(saved, base){
+  if(!validateKioskSettings(saved)) throw new Error('このブラウザに既存の接続設定がありません。普段ノエルミートを使っている端末・ブラウザで開いてください。');
+  if(saved.count > 3) throw new Error('現在の保存設定は' + saved.count + '拠点です。最大5拠点のため、そのまま2拠点を追加できません。使用中の拠点を確認してください。');
+  const count = saved.count + 2;
+  const make = (me, name) => {
+    const data = {room: saved.room, count, me};
+    if(name) data.name = name;
+    const url = new URL(base);
+    url.search = ''; url.hash = 'kiosk=' + encodeURIComponent(JSON.stringify(data));
+    return url.href;
+  };
+  return {
+    count,
+    added: ['セールスグリッド一宮', 'セールスグリッド長崎（宇田）'].map((name, i) =>
+      ({name, me: saved.count + i + 1, url: make(saved.count + i + 1, name)})),
+    existing: Array.from({length: saved.count}, (_, i) =>
+      ({name: '既存の拠点 ' + (i + 1) + ' 更新用', me: i + 1, url: make(i + 1)})),
+  };
+}
+function showKioskSetup(){
+  $('panelMeet').hidden = true;
+  $('panelKiosk').hidden = false;
+  document.querySelectorAll('#modeTabs .seg').forEach(b =>
+    b.classList.toggle('active', b.dataset.panel === 'panelKiosk'));
+}
+$('salesgridLinksBtn').addEventListener('click', () => {
+  const out = $('salesgridLinks'); out.replaceChildren();
+  try{
+    const plan = buildSalesgridInvites(JSON.parse(localStorage.getItem(LS_KEY) || 'null'), location.href);
+    $('salesgridStatus').textContent = '追加後は' + plan.count + '拠点です。新拠点の番号が未使用であることを確認して配布してください。元の設定・接続はまだ変更していません。';
+    for(const item of [...plan.added, ...plan.existing]){
+      const field = document.createElement('div'); field.className = 'field';
+      const label = document.createElement('label'); label.textContent = item.name + '（拠点' + item.me + '）';
+      const row = document.createElement('div'); row.className = 'linkrow';
+      const input = document.createElement('input'); input.readOnly = true; input.value = item.url;
+      input.setAttribute('aria-label', item.name + 'の参加リンク');
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'mini'; button.textContent = 'コピー';
+      button.addEventListener('click', async () => {
+        try{ await navigator.clipboard.writeText(item.url); toast(item.name + 'のリンクをコピーしました'); }
+        catch(e){ input.focus(); input.select(); toast('リンクを選択しました。コピーしてください'); }
+      });
+      row.append(input, button); field.append(label, row); out.append(field);
+    }
+  }catch(e){ $('salesgridStatus').textContent = e.message; }
+});
+(function(){
+  const query = new URLSearchParams(location.search);
+  if(query.has('m') || query.has('room')) return;
+  if(query.get('setup') === 'salesgrid'){
+    showKioskSetup(); $('salesgridSetup').open = true;
+  }
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  if(!fragment.has('kiosk')) return;
+  showKioskSetup();
+  try{
+    const incoming = JSON.parse(fragment.get('kiosk'));
+    if(!validateKioskSettings(incoming)) throw new Error('追加リンクの設定が正しくありません。発行元でリンクを作り直してください。');
+    // 既存拠点の更新リンクを違う端末で開いた場合は、番号を勝手に上書きしない。
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+    if(incoming.name && validateKioskSettings(saved) && (saved.room !== incoming.room || saved.me !== incoming.me))
+      throw new Error('この端末には別の拠点の設定が保存されています。新拠点用のリンクは一宮・長崎それぞれの専用端末で開いてください。');
+    if(!incoming.name && (!validateKioskSettings(saved) || saved.room !== incoming.room || saved.me !== incoming.me))
+      throw new Error('この更新リンクは別の拠点用です。表示されている拠点番号の端末で開いてください。');
+    $('inRoom').value = incoming.room;
+    $('inCount').value = String(incoming.count); rebuildMeOptions();
+    $('inMe').value = String(incoming.me);
+    if(incoming.name) $('inName').value = incoming.name;
+    $('salesgridStatus').textContent = '拠点' + incoming.me + '・全' + incoming.count + '拠点の設定を読み込みました。「この拠点でつなぐ」で保存して参加します。';
+    history.replaceState(null, '', location.pathname + location.search);
+  }catch(e){ $('salesgridStatus').textContent = e.message; }
+  $('salesgridSetup').open = true;
+})();
 
 /* ---- モード切替タブ（顧客と打ち合わせ／拠点をつなぐ）。既定=顧客 ---- */
 (function(){
